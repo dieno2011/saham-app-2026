@@ -7,10 +7,18 @@ import numpy as np
 from datetime import datetime
 import pytz
 
-# 1. Konfigurasi Halaman
-st.set_page_config(page_title="StockPro Ultimate 2026", layout="wide")
+# 1. KONFIGURASI HALAMAN
+st.set_page_config(page_title="StockPro Pro 2026", layout="wide")
 
-# Setting Zona Waktu Jakarta (WIB)
+# CSS untuk mempercantik UI
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    div[data-testid="stMetric"] { background-color: #1e2127; padding: 10px; border-radius: 10px; border: 1px solid #30363d; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Zona Waktu Jakarta
 tz = pytz.timezone('Asia/Jakarta')
 waktu_sekarang = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
 
@@ -21,118 +29,119 @@ st.write(f"🕒 **Waktu Realtime (WIB):** {waktu_sekarang}")
 emiten_list = ["BBRI.JK", "TLKM.JK", "ASII.JK", "ADRO.JK", "GOTO.JK", 
                "BMRI.JK", "BBNI.JK", "UNTR.JK", "AMRT.JK", "BRIS.JK"]
 
-@st.cache_data(ttl=60)
-def get_watchlist_data(tickers):
-    combined_data = []
+@st.cache_data(ttl=30)
+def get_clean_watchlist(tickers):
+    combined = []
     for t in tickers:
         try:
             d = yf.download(t, period="5d", interval="1d", progress=False)
             if not d.empty and len(d) >= 2:
-                # Menggunakan flatten() untuk menghindari TypeError pada data Multi-Index
+                # Menangani Multi-Index secara aman
                 close_prices = d['Close'].values.flatten()
-                price = float(close_prices[-1])
-                prev = float(close_prices[-2])
-                change = ((price - prev) / prev) * 100
-                combined_data.append({
+                current_p = float(close_prices[-1])
+                prev_p = float(close_prices[-2])
+                change_p = ((current_p - prev_p) / prev_p) * 100
+                combined.append({
                     "Ticker": t.replace(".JK", ""),
-                    "Harga": price,
-                    "Perubahan (%)": round(change, 2)
+                    "Harga": current_p,
+                    "Perubahan (%)": round(change_p, 2)
                 })
         except: continue
-    return pd.DataFrame(combined_data)
+    return pd.DataFrame(combined)
 
-# --- TAMPILAN WATCHLIST ---
-df_watch = get_watchlist_data(emiten_list)
+# --- EKSEKUSI WATCHLIST ---
+df_watch = get_clean_watchlist(emiten_list)
 if not df_watch.empty:
     df_sorted = df_watch.sort_values(by="Perubahan (%)", ascending=False).reset_index(drop=True)
     cols = st.columns(5)
     for i in range(min(5, len(df_sorted))):
         with cols[i]:
-            # Perbaikan: Menggunakan argumen eksplisit untuk hindari SyntaxError
             st.metric(
                 label=str(df_sorted.iloc[i]['Ticker']), 
                 value=f"Rp {float(df_sorted.iloc[i]['Harga']):,.0f}", 
                 delta=f"{float(df_sorted.iloc[i]['Perubahan (%)']):.2f}%"
             )
 else:
-    st.error("Gagal memuat data pasar.")
+    st.warning("Menghubungkan ke server bursa...")
 
 st.divider()
 
-# --- INPUT & TIMEFRAME ---
+# --- INPUT ANALISIS ---
 col_in1, col_in2 = st.columns([1, 1])
 with col_in1:
     default_tk = df_sorted.iloc[0]['Ticker'] if not df_watch.empty else "BBRI"
-    ticker_input = st.text_input("🔍 Kode Saham:", default_tk).upper()
+    user_tk = st.text_input("🔍 Kode Saham (Tanpa .JK):", default_tk).upper()
 with col_in2:
-    timeframe = st.selectbox("⏱️ Timeframe Analisis:", ("1 Menit", "60 Menit", "1 Hari"))
+    timeframe = st.selectbox("⏱️ Timeframe:", ("1 Menit", "60 Menit", "1 Hari"))
 
 tf_map = {"1 Menit": "1m", "60 Menit": "60m", "1 Hari": "1d"}
 period_map = {"1 Menit": "1d", "60 Menit": "1mo", "1 Hari": "1y"}
 
 # --- PENGAMBILAN DATA DETAIL ---
-ticker_full = f"{ticker_input}.JK"
+full_tk = f"{user_tk}.JK"
 
 try:
-    df = yf.download(ticker_full, period=period_map[timeframe], interval=tf_map[timeframe], progress=False)
+    df = yf.download(full_tk, period=period_map[timeframe], interval=tf_map[timeframe], progress=False)
     
     if not df.empty:
-        # Konversi Zona Waktu untuk grafik intraday
+        # Penanganan Timezone agar grafik tidak kosong
         if timeframe != "1 Hari":
             df.index = df.index.tz_convert('Asia/Jakarta')
 
-        # --- KALKULASI INDIKATOR ---
+        # Bersihkan data Multi-Index untuk indikator
+        close_data = df['Close'].values.flatten()
+        open_data = df['Open'].values.flatten()
+        high_data = df['High'].values.flatten()
+        low_data = df['Low'].values.flatten()
+        vol_data = df['Volume'].values.flatten()
+
         # 1. Bollinger Bands
-        df['MA20'] = df['Close'].rolling(window=20).mean()
-        df['Upper'] = df['MA20'] + (df['Close'].rolling(window=20).std() * 2)
-        df['Lower'] = df['MA20'] - (df['Close'].rolling(window=20).std() * 2)
+        ma20 = pd.Series(close_data).rolling(window=20).mean()
+        std20 = pd.Series(close_data).rolling(window=20).std()
+        upper_bb = ma20 + (std20 * 2)
+        lower_bb = ma20 - (std20 * 2)
 
         # 2. MACD
-        ema12 = df['Close'].ewm(span=12, adjust=False).mean()
-        ema26 = df['Close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = ema12 - ema26
-        df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-        df['Hist'] = df['MACD'] - df['Signal']
+        ema12 = pd.Series(close_data).ewm(span=12, adjust=False).mean()
+        ema26 = pd.Series(close_data).ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
 
-        # 3. Prediksi Linear Regression (10 Periode)
-        prices = df['Close'].values.flatten()
-        y_val = prices[~np.isnan(prices)][-20:]
-        x_val = np.arange(len(y_val))
-        slope, intercept = np.polyfit(x_val, y_val, 1)
-        pred_price = slope * (len(y_val) + 10) + intercept
+        # 3. Prediksi Linear 10 Periode
+        clean_y = close_data[~np.isnan(close_data)][-20:]
+        x_axis = np.arange(len(clean_y))
+        slope, intercept = np.polyfit(x_axis, clean_y, 1)
+        pred_p = slope * (len(clean_y) + 10) + intercept
 
-        # --- LAYOUT GRAFIK ---
-        st.subheader(f"📊 Advanced Chart: {ticker_input}")
-        
+        # --- GRAFIK PROFESIONAL ---
         fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
-                           vertical_spacing=0.05, 
-                           row_heights=[0.5, 0.2, 0.3])
+                           vertical_spacing=0.05, row_heights=[0.5, 0.2, 0.3])
 
-        # Candlestick & Bollinger Bands
-        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], 
-                                   low=df['Low'], close=df['Close'], name="Price"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['Upper'], line=dict(color='gray', width=1), name="Upper BB"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['Lower'], line=dict(color='gray', width=1), name="Lower BB", fill='tonexty'), row=1, col=1)
+        # Row 1: Candlestick + BB
+        fig.add_trace(go.Candlestick(x=df.index, open=open_data, high=high_data, 
+                                   low=low_data, close=close_data, name="Price"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=upper_bb, line=dict(color='gray', width=1), name="Upper BB"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=lower_bb, line=dict(color='gray', width=1), name="Lower BB", fill='tonexty'), row=1, col=1)
 
-        # Volume
-        fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color='orange'), row=2, col=1)
+        # Row 2: Volume
+        fig.add_trace(go.Bar(x=df.index, y=vol_data, name="Volume", marker_color='orange'), row=2, col=1)
 
-        # MACD
-        fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], line=dict(color='blue'), name="MACD"), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], line=dict(color='red'), name="Signal"), row=3, col=1)
+        # Row 3: MACD
+        fig.add_trace(go.Scatter(x=df.index, y=macd_line, line=dict(color='cyan'), name="MACD"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=signal_line, line=dict(color='red'), name="Signal"), row=3, col=1)
 
         fig.update_layout(template="plotly_dark", height=800, xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- INFO PANEL ---
+        # --- KOTAK SARAN ---
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.info(f"🔮 **Prediksi 10 {timeframe}:** Rp {pred_price:,.0f}")
+            st.metric("Harga Terkini", f"Rp {close_data[-1]:,.0f}")
         with c2:
-            saran = "BELI" if slope > 0 and df['MACD'].iloc[-1] > df['Signal'].iloc[-1] else "JUAL/WAIT"
-            st.success(f"💡 **Saran Strategi:** {saran}")
+            st.info(f"🔮 Prediksi 10 Periode: Rp {pred_p:,.0f}")
         with c3:
-            st.metric("Harga Terkini", f"Rp {prices[-1]:,.0f}")
+            saran = "🚀 BELI" if slope > 0 and macd_line.iloc[-1] > signal_line.iloc[-1] else "📉 JUAL / WAIT"
+            st.success(f"💡 Saran: {saran}")
 
 except Exception as e:
-    st.error(f"Sistem sedang sibuk atau emiten tidak ditemukan. Info: {e}")
+    st.error(f"Sistem sedang sinkronisasi. Sila pilih emiten lain atau tunggu sejenak.")
