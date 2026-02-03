@@ -45,10 +45,10 @@ if not df_watch.empty:
             st.metric(df_watch.iloc[i]['Ticker'], 
                       harga_val = float(df_watch.iloc[i]['Harga']),
 st.metric(
-    label=df_watch.iloc[i]['Ticker'], 
-    value=f"Rp {harga_val:,.0f}", 
-    delta=f"{df_watch.iloc[i]['Perubahan (%)']}%"
-), 
+            label=str(df_watch.iloc[i]['Ticker']), 
+            value=f"Rp {float(df_watch.iloc[i]['Harga']):,.0f}", 
+            delta=f"{float(df_watch.iloc[i]['Perubahan (%)']):.2f}%"
+        ), 
                       f"{df_watch.iloc[i]['Perubahan (%)']}%")
     
     # Menampilkan 5 berikutnya dalam tabel yang rapi
@@ -86,4 +86,5 @@ with col_b:
     else:
 
         st.write("Tidak ada berita terbaru untuk emiten ini.")
+
 
