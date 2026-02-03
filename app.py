@@ -35,7 +35,7 @@ def get_watchlist_data(tickers):
 
 # --- TAMPILAN TOP 10 (Urutan Kenaikan Tertinggi) ---
 st.subheader("🏆 Top 10 Rekomendasi Hari Ini")
-df_watch = get_watchlist_data(emiten_list)
+df_watch = df_watch.dropna()
 
 if not df_watch.empty:
     # Menampilkan 5 teratas dalam kolom besar (Highlight)
@@ -43,7 +43,12 @@ if not df_watch.empty:
     for i in range(min(5, len(df_watch))):
         with top_cols[i]:
             st.metric(df_watch.iloc[i]['Ticker'], 
-                      f"Rp{df_watch.iloc[i]['Harga']:,.0f}", 
+                      harga_val = float(df_watch.iloc[i]['Harga'])
+st.metric(
+    label=df_watch.iloc[i]['Ticker'], 
+    value=f"Rp {harga_val:,.0f}", 
+    delta=f"{df_watch.iloc[i]['Perubahan (%)']}%"
+), 
                       f"{df_watch.iloc[i]['Perubahan (%)']}%")
     
     # Menampilkan 5 berikutnya dalam tabel yang rapi
@@ -79,4 +84,5 @@ with col_b:
             st.caption(f"Sumber: {item['publisher']} | [Baca Berita]({item['link']})")
             st.divider()
     else:
+
         st.write("Tidak ada berita terbaru untuk emiten ini.")
