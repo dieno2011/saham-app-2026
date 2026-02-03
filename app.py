@@ -49,24 +49,25 @@ st.metric(
             value=f"Rp {float(df_watch.iloc[i]['Harga']):,.0f}", 
             delta=f"{float(df_watch.iloc[i]['Perubahan (%)']):.2f}%"
         ), 
-                      if not df_watch.empty:
+                      # Hapus bagian loop watchlist lama Anda dan ganti dengan ini:
+if not df_watch.empty:
     top_cols = st.columns(5)
     for i in range(min(5, len(df_watch))):
         with top_cols[i]:
             try:
-                # Pastikan data dikonversi ke format yang benar
-                nama = str(df_watch.iloc[i]['Ticker'])
-                harga = float(df_watch.iloc[i]['Harga'])
-                persen = float(df_watch.iloc[i]['Perubahan (%)'])
+                # 1. Ambil data secara aman
+                nama_saham = str(df_watch.iloc[i]['Ticker'])
+                harga_val = float(df_watch.iloc[i]['Harga'])
+                perubahan_val = float(df_watch.iloc[i]['Perubahan (%)'])
                 
-                # PERBAIKAN UTAMA: Gunakan nama argumen (label=, value=, delta=) secara konsisten
+                # 2. Tampilkan dengan sintaks yang benar (Setiap bagian diberi nama)
                 st.metric(
-                    label=nama, 
-                    value=f"Rp {harga:,.0f}", 
-                    delta=f"{persen:.2f}%"
+                    label=nama_saham, 
+                    value=f"Rp {harga_val:,.0f}", 
+                    delta=f"{perubahan_val:.2f}%"
                 )
             except Exception as e:
-                st.error("Data Error")
+                st.error("Gagal memuat data")
     
     # Menampilkan 5 berikutnya dalam tabel yang rapi
     st.write("### Daftar Lengkap (Urutan Performa)")
@@ -103,6 +104,7 @@ with col_b:
     else:
 
         st.write("Tidak ada berita terbaru untuk emiten ini.")
+
 
 
 
