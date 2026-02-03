@@ -37,18 +37,28 @@ def get_watchlist_data(tickers):
 st.subheader("🏆 Top 10 Rekomendasi Hari Ini")
 df_watch = df_watch.dropna()
 
+# --- TAMPILAN WATCHLIST DYNAMIS ---
+st.subheader("🏆 Top 10 Rekomendasi Hari Ini")
+df_watch = get_watchlist_data(emiten_list)
+
 if not df_watch.empty:
-    # Menampilkan 5 teratas dalam kolom besar (Highlight)
     top_cols = st.columns(5)
     for i in range(min(5, len(df_watch))):
         with top_cols[i]:
-            st.metric(df_watch.iloc[i]['Ticker'], 
-                      harga_val = float(df_watch.iloc[i]['Harga']),
-st.metric(
-            label=str(df_watch.iloc[i]['Ticker']), 
-            value=f"Rp {float(df_watch.iloc[i]['Harga']):,.0f}", 
-            delta=f"{float(df_watch.iloc[i]['Perubahan (%)']):.2f}%"
-        ), 
+            try:
+                # 1. Ambil dan bersihkan data agar menjadi angka murni
+                ticker_name = str(df_watch.iloc[i]['Ticker'])
+                current_price = float(df_watch.iloc[i]['Harga'])
+                change_pct = float(df_watch.iloc[i]['Perubahan (%)'])
+                
+                # 2. Tampilkan dengan format yang benar dan semua argumen diberi nama
+                st.metric(
+                    label=ticker_name, 
+                    value=f"Rp {current_price:,.0f}", 
+                    delta=f"{change_pct:.2f}%"
+                )
+            except Exception as e:
+                st.error("Data Error")
                       # Hapus bagian loop watchlist lama Anda dan ganti dengan ini:
 if not df_watch.empty:
     top_cols = st.columns(5)
@@ -104,6 +114,7 @@ with col_b:
     else:
 
         st.write("Tidak ada berita terbaru untuk emiten ini.")
+
 
 
 
