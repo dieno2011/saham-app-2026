@@ -49,7 +49,24 @@ st.metric(
             value=f"Rp {float(df_watch.iloc[i]['Harga']):,.0f}", 
             delta=f"{float(df_watch.iloc[i]['Perubahan (%)']):.2f}%"
         ), 
-                      f"{df_watch.iloc[i]['Perubahan (%)']}%")
+                      if not df_watch.empty:
+    top_cols = st.columns(5)
+    for i in range(min(5, len(df_watch))):
+        with top_cols[i]:
+            try:
+                # Pastikan data dikonversi ke format yang benar
+                nama = str(df_watch.iloc[i]['Ticker'])
+                harga = float(df_watch.iloc[i]['Harga'])
+                persen = float(df_watch.iloc[i]['Perubahan (%)'])
+                
+                # PERBAIKAN UTAMA: Gunakan nama argumen (label=, value=, delta=) secara konsisten
+                st.metric(
+                    label=nama, 
+                    value=f"Rp {harga:,.0f}", 
+                    delta=f"{persen:.2f}%"
+                )
+            except Exception as e:
+                st.error("Data Error")
     
     # Menampilkan 5 berikutnya dalam tabel yang rapi
     st.write("### Daftar Lengkap (Urutan Performa)")
@@ -86,5 +103,6 @@ with col_b:
     else:
 
         st.write("Tidak ada berita terbaru untuk emiten ini.")
+
 
 
