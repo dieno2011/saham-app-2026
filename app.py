@@ -37,28 +37,34 @@ def get_watchlist_data(tickers):
 st.subheader("🏆 Top 10 Rekomendasi Hari Ini")
 df_watch = df_watch.dropna()
 
-# --- TAMPILAN WATCHLIST DYNAMIS ---
+# --- 1. AMBIL DATA DULU (PENTING: Harus di atas) ---
 st.subheader("🏆 Top 10 Rekomendasi Hari Ini")
-df_watch = get_watchlist_data(emiten_list)
+df_watch = get_watchlist_data(emiten_list) # Variabel df_watch dibuat di sini
 
+# --- 2. BERSIHKAN DATA (Hanya jika data tidak kosong) ---
 if not df_watch.empty:
+    df_watch = df_watch.dropna() # Sekarang baris ini tidak akan NameError
+    
+    # --- 3. TAMPILKAN DALAM KOLOM ---
     top_cols = st.columns(5)
     for i in range(min(5, len(df_watch))):
         with top_cols[i]:
             try:
-                # 1. Ambil dan bersihkan data agar menjadi angka murni
-                ticker_name = str(df_watch.iloc[i]['Ticker'])
-                current_price = float(df_watch.iloc[i]['Harga'])
-                change_pct = float(df_watch.iloc[i]['Perubahan (%)'])
+                # Ambil data satu per satu
+                nama = str(df_watch.iloc[i]['Ticker'])
+                harga = float(df_watch.iloc[i]['Harga'])
+                persen = float(df_watch.iloc[i]['Perubahan (%)'])
                 
-                # 2. Tampilkan dengan format yang benar dan semua argumen diberi nama
+                # Tampilkan dengan semua argumen diberi nama (Sesuai solusi sebelumnya)
                 st.metric(
-                    label=ticker_name, 
-                    value=f"Rp {current_price:,.0f}", 
-                    delta=f"{change_pct:.2f}%"
+                    label=nama, 
+                    value=f"Rp {harga:,.0f}", 
+                    delta=f"{persen:.2f}%"
                 )
             except Exception as e:
-                st.error("Data Error")
+                st.error("Gagal memuat unit")
+else:
+    st.warning("Data sedang tidak tersedia. Pastikan bursa sedang buka.")
                       # Hapus bagian loop watchlist lama Anda dan ganti dengan ini:
 if not df_watch.empty:
     top_cols = st.columns(5)
@@ -114,6 +120,7 @@ with col_b:
     else:
 
         st.write("Tidak ada berita terbaru untuk emiten ini.")
+
 
 
 
