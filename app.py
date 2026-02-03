@@ -43,7 +43,7 @@ if not df_watch.empty:
     for i in range(min(5, len(df_watch))):
         with top_cols[i]:
             st.metric(df_watch.iloc[i]['Ticker'], 
-                      harga_val = float(df_watch.iloc[i]['Harga'])
+                      harga_val = float(df_watch.iloc[i]['Harga']),
 st.metric(
     label=df_watch.iloc[i]['Ticker'], 
     value=f"Rp {harga_val:,.0f}", 
@@ -86,3 +86,4 @@ with col_b:
     else:
 
         st.write("Tidak ada berita terbaru untuk emiten ini.")
+
