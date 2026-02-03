@@ -5,84 +5,109 @@ import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
 
-# 1. Konfigurasi Halaman & Tema
+# 1. Konfigurasi Halaman
 st.set_page_config(page_title="StockPro Ultimate 2026", layout="wide")
 
-# Custom CSS untuk tampilan mobile yang lebih bersih
+# Gaya Tampilan Dark Mode Profesional
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
-    div[data-testid="stMetric"] { background-color: #1e2127; padding: 10px; border-radius: 10px; }
+    div[data-testid="stMetric"] { background-color: #1e2127; padding: 15px; border-radius: 10px; border: 1px solid #30363d; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🚀 StockPro Ultimate 2026")
 
-# --- SIDEBAR: PENGATURAN ANALISIS ---
-st.sidebar.header("⚙️ Pengaturan Analisis")
-timeframe = st.sidebar.selectbox(
+# --- SIDEBAR ---
+st.sidebar.header("⚙️ Konfigurasi Analisis")
+tf_option = st.sidebar.selectbox(
     "Pilih Timeframe Prediksi:",
     ("Menit (1m)", "Jam (60m)", "Harian (1d)")
 )
 
-# Pemetaan interval untuk Yahoo Finance
 tf_map = {
-    "Menit (1m)": {"period": "1d", "interval": "1m", "label": "Menit"},
-    "Jam (60m)": {"period": "1mo", "interval": "60m", "label": "Jam"},
-    "Harian (1d)": {"period": "1y", "interval": "1d", "label": "Hari"}
+    "Menit (1m)": {"period": "1d", "interval": "1m", "lbl": "Menit"},
+    "Jam (60m)": {"period": "1mo", "interval": "60m", "lbl": "Jam"},
+    "Harian (1d)": {"period": "1y", "interval": "1d", "lbl": "Hari"}
 }
 
-# --- KONFIGURASI 10 EMITEN ---
+# --- LIST EMITEN ---
 emiten_list = ["BBRI.JK", "TLKM.JK", "ASII.JK", "ADRO.JK", "GOTO.JK", 
                "BMRI.JK", "BBNI.JK", "UNTR.JK", "AMRT.JK", "BRIS.JK"]
 
-@st.cache_data(ttl=60) 
-def get_watchlist_data(tickers):
-    combined_data = []
+@st.cache_data(ttl=60)
+def get_clean_data(tickers):
+    combined = []
     for t in tickers:
         try:
-            d = yf.download(t, period="5d", interval="1d", progress=False)
-            if not d.empty and len(d) >= 2:
-                price = float(d['Close'].iloc[-1])
-                prev = float(d['Close'].iloc[-2])
-                change = ((price - prev) / prev) * 100
-                combined_data.append({
+            # Mengambil data 5 hari untuk memastikan perbandingan harga tersedia
+            raw = yf.download(t, period="5d", interval="1d", progress=False)
+            if not raw.empty and len(raw) >= 2:
+                # Menangani Multi-Index jika ada
+                close_prices = raw['Close'].values.flatten()
+                current_p = float(close_prices[-1])
+                prev_p = float(close_prices[-2])
+                change_p = ((current_p - prev_p) / prev_p) * 100
+                
+                combined.append({
                     "Ticker": t.replace(".JK", ""),
-                    "Harga": price,
-                    "Perubahan (%)": round(change, 2)
+                    "Harga": current_p,
+                    "Perubahan (%)": round(change_p, 2)
                 })
         except: continue
-    df = pd.DataFrame(combined_data)
-    if not df.empty:
-        return df.sort_values(by="Perubahan (%)", ascending=False).reset_index(drop=True)
-    return df
+    return pd.DataFrame(combined)
 
-# --- TAMPILAN WATCHLIST ---
-st.subheader("🏆 Top Performance")
-df_watch = get_watchlist_data(emiten_list)
+# --- EKSEKUSI DATA WATCHLIST ---
+df_watch = get_clean_data(emiten_list)
+
 if not df_watch.empty:
+    st.subheader("🏆 Top Performance (Sorted by Gain)")
+    df_sorted = df_watch.sort_values(by="Perubahan (%)", ascending=False).reset_index(drop=True)
+    
     cols = st.columns(5)
-    for i in range(min(5, len(df_watch))):
+    for i in range(min(5, len(df_sorted))):
         with cols[i]:
-            st.metric(
-                label=str(df_watch.iloc[i]['Ticker']), 
-                value=f"Rp {float(df_watch.iloc[i]['Harga']):,.0f}", 
-                delta=f"{float(df_watch.iloc[i]['Perubahan (%)']):.2f}%"
-            )
+            ticker = str(df_sorted.iloc[i]['Ticker'])
+            harga = float(df_sorted.iloc[i]['Harga'])
+            persen = float(df_sorted.iloc[i]['Perubahan (%)'])
+            st.metric(label=ticker, value=f"Rp {harga:,.0f}", delta=f"{persen:.2f}%")
 else:
-    st.warning("Data sedang memuat atau bursa tutup.")
+    st.error("Gagal memuat data. Periksa koneksi internet atau server Yahoo Finance.")
 
 st.divider()
 
-# --- ANALISIS DETAIL DENGAN TIMEFRAME DINAMIS ---
-col_a, col_b = st.columns([2, 1])
+# --- DETAIL ANALISIS & PREDIKSI ---
+col1, col2 = st.columns([2, 1])
 
-with col_a:
-    st.subheader(f"🔍 Prediksi Tren ({timeframe})")
-    default_ticker = df_watch.iloc[0]['Ticker'] if not df_watch.empty else "BBRI"
-    ticker_input = st.text_input("Ketik Kode Saham:", default_ticker).upper()
-    ticker_full = f"{ticker_input}.JK"
-
+with col1:
+    st.subheader(f"🔍 Prediksi Tren ({tf_option})")
+    default_tk = df_sorted.iloc[0]['Ticker'] if not df_watch.empty else "BBRI"
+    user_tk = st.text_input("Cari Kode Saham (Tanpa .JK):", default_tk).upper()
+    full_tk = f"{user_tk}.JK"
+    
     try:
-        conf = tf_map[timeframe]
-        df_detail = yf.download(ticker_full, period=conf['
+        c = tf_map[tf_option]
+        data_dtl = yf.download(full_tk, period=c['period'], interval=c['interval'], progress=False)
+        
+        if not data_dtl.empty:
+            # Logika Regresi untuk Prediksi
+            prices = data_dtl['Close'].values.flatten()
+            prices = prices[~np.isnan(prices)] # Hapus NaN
+            
+            if len(prices) > 10:
+                y = prices[-20:] # Ambil 20 data terakhir
+                x = np.arange(len(y))
+                slope, intercept = np.polyfit(x, y, 1)
+                
+                # Proyeksi 3 langkah ke depan
+                future_val = slope * (len(y) + 3) + intercept
+                current_val = float(y[-1])
+                pct_pred = ((future_val - current_val) / current_val) * 100
+                
+                m1, m2 = st.columns(2)
+                if slope > 0:
+                    m1.success("🚀 SENTIMEN: BULLISH (NAIK)")
+                    m2.metric(f"Estimasi 3 {c['lbl']}", f"{pct_pred:.2f}%", delta=f"{future_val-current_val:,.2f}")
+                else:
+                    m1.error("📉 SENTIMEN: BEARISH (TURUN)")
+                    m2
