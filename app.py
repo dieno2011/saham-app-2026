@@ -79,56 +79,65 @@ try:
         e12 = pd.Series(cl).ewm(span=12, adjust=False).mean(); e26 = pd.Series(cl).ewm(span=26, adjust=False).mean()
         macd_line = e12 - e26; signal_line = macd_line.ewm(span=9, adjust=False).mean()
 
-        # --- LOGIKA PREDIKSI BERDASARKAN TEKNIKAL ---
+        # --- LOGIKA PREDIKSI SMART (5 PERIODE) + ANALISA VOLUME ---
         y_last = cl[-20:]
         slope, intercept = np.polyfit(np.arange(len(y_last)), y_last, 1)
         
-        # Faktor Penyesuai (Weighting)
+        # Analisa Volume (Ratio volume saat ini terhadap rata-rata 20 periode)
+        vol_ma20 = pd.Series(vl).rolling(20).mean().iloc[-1]
+        vol_ratio = vl[-1] / vol_ma20 if vol_ma20 > 0 else 1
+        vol_factor = 0.005 if (vol_ratio > 1.5 and cl[-1] > op[-1]) else -0.005 if (vol_ratio > 1.5 and cl[-1] < op[-1]) else 0
+        
+        # Faktor Penyesuai Lain (RSI & MACD)
         rsi_factor = (30 - rsi.iloc[-1]) * 0.001 if rsi.iloc[-1] < 30 else (70 - rsi.iloc[-1]) * 0.001 if rsi.iloc[-1] > 70 else 0
         macd_factor = (macd_line.iloc[-1] - signal_line.iloc[-1]) * 0.01
         
         future_prices = []
         last_p = cl[-1]
-        for i in range(1, 11):
-            # Gabungan Trend Linear + Momentum RSI + Momentum MACD
-            price_step = slope + (last_p * rsi_factor) + (last_p * macd_factor)
-            new_p = last_p + price_step
+        for i in range(1, 6): # Hanya 5 Periode
+            # Rumus Prediksi: Trend + (Momentum RSI + MACD + Volume Spike)
+            adjustment = (last_p * rsi_factor) + (last_p * macd_factor) + (last_p * vol_factor)
+            new_p = last_p + slope + adjustment
             future_prices.append(new_p)
             last_p = new_p
 
         step = (df.index[1] - df.index[0]) if len(df) > 1 else timedelta(minutes=1)
-        future_dates = [df.index[-1] + (step * i) for i in range(1, 11)]
+        future_dates = [df.index[-1] + (step * i) for i in range(1, 6)]
 
         # --- HEADER HARGA ---
         st.markdown(f"### 📈 Live Analysis: {target_input}.JK")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Harga Realtime", f"Rp {cl[-1]:,.0f}", f"{cl[-1]-op[-1]:,.0f}")
-        m2.metric("RSI (14)", f"{rsi.iloc[-1]:.2f}")
-        m3.metric("MACD Status", "Bullish" if macd_line.iloc[-1] > signal_line.iloc[-1] else "Bearish")
-        m4.metric("Target P-10", f"Rp {future_prices[-1]:,.0f}")
+        m2.metric("Vol Ratio", f"{vol_ratio:.2f}x")
+        m3.metric("RSI (14)", f"{rsi.iloc[-1]:.2f}")
+        m4.metric("Target P-5", f"Rp {future_prices[-1]:,.0f}")
 
         # --- GRAFIK ---
         fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.4, 0.15, 0.2, 0.25],
-                           subplot_titles=("Price, Bollinger & Smart Prediction", "Volume", "MACD", "RSI"))
+                           subplot_titles=("Price, Bollinger & Vol-Weighted Prediction", "Volume", "MACD", "RSI"))
         fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="Price"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=u_bb, line=dict(color='rgba(255,255,255,0.2)'), name="Upper BB"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=l_bb, line=dict(color='rgba(255,255,255,0.2)'), name="Lower BB", fill='tonexty'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=future_dates, y=future_prices, line=dict(color='yellow', width=3, dash='dot'), name="Smart Prediction"), row=1, col=1)
-        fig.add_trace(go.Bar(x=df.index, y=vl, name="Volume", marker_color='orange'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=future_dates, y=future_prices, line=dict(color='yellow', width=3, dash='dot'), name="5-Period Prediction"), row=1, col=1)
+        
+        # Color Volume based on price action
+        colors = ['red' if c < o else 'green' for c, o in zip(cl, op)]
+        fig.add_trace(go.Bar(x=df.index, y=vl, name="Volume", marker_color=colors), row=2, col=1)
+        
         fig.add_trace(go.Scatter(x=df.index, y=macd_line, name="MACD", line=dict(color='cyan')), row=3, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=signal_line, name="Signal", line=dict(color='red')), row=3, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=rsi, name="RSI", line=dict(color='magenta')), row=4, col=1)
         fig.update_layout(template="plotly_dark", height=1000, xaxis_rangeslider_visible=False, xaxis4=dict(tickformat="%H:%M\n%d %b"))
         st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
-        # --- TABEL DATA PREDIKSI ---
-        st.subheader(f"📋 Estimasi Nilai Tiap Periode ({tf})")
+        # --- TABEL DATA PREDIKSI 5 PERIODE ---
+        st.subheader(f"📋 Estimasi Nilai 5 Periode ({tf})")
         pred_df = pd.DataFrame({
-            "Periode": [f"T+{i}" for i in range(1, 11)],
+            "Periode": [f"T+{i}" for i in range(1, 6)],
             "Estimasi Waktu": [d.strftime('%H:%M:%S (%d/%m)') for d in future_dates],
             "Ekspektasi Harga": [f"Rp {p:,.2f}" for p in future_prices]
         })
         st.table(pred_df)
 
 except Exception as e:
-    st.error(f"Pilih emiten terlebih dahulu atau cek koneksi. Info: {e}")
+    st.error(f"Pilih emiten atau cek koneksi. Info: {e}")
