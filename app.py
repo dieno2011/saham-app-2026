@@ -13,14 +13,25 @@ tz = pytz.timezone('Asia/Jakarta')
 
 # --- SIDEBAR: KONTROL TOTAL ---
 st.sidebar.header("🛠️ Panel Kontrol")
+
+# A. INPUT MANUAL WATCHLIST
 st.sidebar.subheader("📝 Kelola Watchlist")
 txt_input = st.sidebar.text_area("Input Kode (Tanpa .JK, pisah koma):", 
                                 "BBRI, TLKM, ASII, ADRO, GOTO, BMRI, BBNI, UNTR, AMRT, BRIS, BBCA, ANTM, MDKA, PTBA, ITMG")
 manual_list = [f"{t.strip().upper()}.JK" for t in txt_input.split(",") if t.strip()][:30]
 
-st.sidebar.subheader("💰 Filter Harga Watchlist")
+# B. FILTER HARGA MANUAL
+st.sidebar.subheader("💰 Filter Harga")
 min_h = st.sidebar.number_input("Harga Minimum (Rp):", value=0, step=50)
 max_h = st.sidebar.number_input("Harga Maksimum (Rp):", value=100000, step=100)
+
+# C. PILIHAN SORTING (BARU)
+st.sidebar.subheader("↕️ Susunan Watchlist")
+sort_by = st.sidebar.selectbox("Susun Berdasarkan:", ("Perubahan (%)", "Harga", "Nama Emiten"))
+sort_order = st.sidebar.radio("Aturan Susunan:", ("Menurun (High to Low / Z-A)", "Menaik (Low to High / A-Z)"))
+
+ascending_logic = True if sort_order == "Menaik (Low to High / A-Z)" else False
+sort_col = {"Perubahan (%)": "Chg%", "Harga": "Harga", "Nama Emiten": "Ticker"}[sort_by]
 
 @st.cache_data(ttl=10)
 def get_data_watchlist(tickers):
@@ -40,12 +51,15 @@ def get_data_watchlist(tickers):
 st.title("🚀 StockPro Ultimate 2026")
 st.write(f"🕒 **Waktu Realtime (WIB):** {datetime.now(tz).strftime('%d %b %Y | %H:%M:%S')}")
 
-# --- WATCHLIST ---
+# --- WATCHLIST DENGAN SORTING ---
 df_w = get_data_watchlist(manual_list)
 if not df_w.empty:
     df_f = df_w[(df_w['Harga'] >= min_h) & (df_w['Harga'] <= max_h)]
-    df_s = df_f.sort_values(by="Chg%", ascending=False).reset_index(drop=True)
-    st.subheader(f"🏆 Performa Watchlist")
+    
+    # Logik Sorting Baru
+    df_s = df_f.sort_values(by=sort_col, ascending=ascending_logic).reset_index(drop=True)
+    
+    st.subheader(f"🏆 Watchlist (Disusun mengikut {sort_by})")
     cols = st.columns(min(5, len(df_s)) if not df_s.empty else 1)
     for i in range(min(5, len(df_s))):
         with cols[i]:
@@ -79,23 +93,18 @@ try:
         e12 = pd.Series(cl).ewm(span=12, adjust=False).mean(); e26 = pd.Series(cl).ewm(span=26, adjust=False).mean()
         macd_line = e12 - e26; signal_line = macd_line.ewm(span=9, adjust=False).mean()
 
-        # --- LOGIKA PREDIKSI SMART (5 PERIODE) + ANALISA VOLUME ---
+        # --- PREDIKSI SMART (5 PERIODE) ---
         y_last = cl[-20:]
         slope, intercept = np.polyfit(np.arange(len(y_last)), y_last, 1)
-        
-        # Analisa Volume (Ratio volume saat ini terhadap rata-rata 20 periode)
         vol_ma20 = pd.Series(vl).rolling(20).mean().iloc[-1]
         vol_ratio = vl[-1] / vol_ma20 if vol_ma20 > 0 else 1
         vol_factor = 0.005 if (vol_ratio > 1.5 and cl[-1] > op[-1]) else -0.005 if (vol_ratio > 1.5 and cl[-1] < op[-1]) else 0
-        
-        # Faktor Penyesuai Lain (RSI & MACD)
         rsi_factor = (30 - rsi.iloc[-1]) * 0.001 if rsi.iloc[-1] < 30 else (70 - rsi.iloc[-1]) * 0.001 if rsi.iloc[-1] > 70 else 0
         macd_factor = (macd_line.iloc[-1] - signal_line.iloc[-1]) * 0.01
         
         future_prices = []
         last_p = cl[-1]
-        for i in range(1, 6): # Hanya 5 Periode
-            # Rumus Prediksi: Trend + (Momentum RSI + MACD + Volume Spike)
+        for i in range(1, 6):
             adjustment = (last_p * rsi_factor) + (last_p * macd_factor) + (last_p * vol_factor)
             new_p = last_p + slope + adjustment
             future_prices.append(new_p)
@@ -114,24 +123,23 @@ try:
 
         # --- GRAFIK ---
         fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.4, 0.15, 0.2, 0.25],
-                           subplot_titles=("Price, Bollinger & Vol-Weighted Prediction", "Volume", "MACD", "RSI"))
+                           subplot_titles=("Price & Prediction", "Volume", "MACD", "RSI"))
         fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="Price"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=u_bb, line=dict(color='rgba(255,255,255,0.2)'), name="Upper BB"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=l_bb, line=dict(color='rgba(255,255,255,0.2)'), name="Lower BB", fill='tonexty'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=future_dates, y=future_prices, line=dict(color='yellow', width=3, dash='dot'), name="5-Period Prediction"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=future_dates, y=future_prices, line=dict(color='yellow', width=3, dash='dot'), name="Prediction"), row=1, col=1)
         
-        # Color Volume based on price action
         colors = ['red' if c < o else 'green' for c, o in zip(cl, op)]
         fig.add_trace(go.Bar(x=df.index, y=vl, name="Volume", marker_color=colors), row=2, col=1)
-        
         fig.add_trace(go.Scatter(x=df.index, y=macd_line, name="MACD", line=dict(color='cyan')), row=3, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=signal_line, name="Signal", line=dict(color='red')), row=3, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=rsi, name="RSI", line=dict(color='magenta')), row=4, col=1)
+        
         fig.update_layout(template="plotly_dark", height=1000, xaxis_rangeslider_visible=False, xaxis4=dict(tickformat="%H:%M\n%d %b"))
         st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
-        # --- TABEL DATA PREDIKSI 5 PERIODE ---
-        st.subheader(f"📋 Estimasi Nilai 5 Periode ({tf})")
+        # --- TABEL ESTIMASI ---
+        st.subheader(f"📋 Estimasi Nilai 5 Periode")
         pred_df = pd.DataFrame({
             "Periode": [f"T+{i}" for i in range(1, 6)],
             "Estimasi Waktu": [d.strftime('%H:%M:%S (%d/%m)') for d in future_dates],
@@ -140,4 +148,4 @@ try:
         st.table(pred_df)
 
 except Exception as e:
-    st.error(f"Pilih emiten atau cek koneksi. Info: {e}")
+    st.error(f"Sila semak kod emiten. Info: {e}")
