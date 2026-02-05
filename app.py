@@ -8,29 +8,23 @@ from datetime import datetime, timedelta
 import pytz
 
 # 1. KONFIGURASI HALAMAN
-st.set_page_config(page_title="StockPro Ultimate 2026", layout="wide")
+st.set_page_config(page_title="StockPro Precision 2026", layout="wide")
 tz = pytz.timezone('Asia/Jakarta')
 
 # --- SIDEBAR: KONTROL TOTAL ---
 st.sidebar.header("🛠️ Panel Kontrol")
-
-# A. INPUT MANUAL WATCHLIST
 st.sidebar.subheader("📝 Kelola Watchlist")
-txt_input = st.sidebar.text_area("Input Kode (Tanpa .JK, pisah koma):", 
-                                "BBRI, TLKM, ASII, ADRO, GOTO, BMRI, BBNI, UNTR, AMRT, BRIS, BBCA, ANTM, MDKA, PTBA, ITMG")
+txt_input = st.sidebar.text_area("Input Kode:", "BBRI, TLKM, ASII, ADRO, GOTO, BMRI, BBNI, UNTR, AMRT, BRIS, BBCA, ANTM, MDKA, PTBA")
 manual_list = [f"{t.strip().upper()}.JK" for t in txt_input.split(",") if t.strip()][:30]
 
-# B. FILTER HARGA MANUAL
 st.sidebar.subheader("💰 Filter Harga")
-min_h = st.sidebar.number_input("Harga Minimum (Rp):", value=0, step=50)
-max_h = st.sidebar.number_input("Harga Maksimum (Rp):", value=200000, step=100)
+min_h = st.sidebar.number_input("Harga Minimum:", value=0)
+max_h = st.sidebar.number_input("Harga Maksimum:", value=500000)
 
-# C. PILIHAN SORTING
 st.sidebar.subheader("↕️ Susunan Watchlist")
 sort_by = st.sidebar.selectbox("Susun Berdasarkan:", ("Perubahan (%)", "Harga", "Nama Emiten"))
-sort_order = st.sidebar.radio("Aturan Susunan:", ("Menurun (High to Low / Z-A)", "Menaik (Low to High / A-Z)"))
-
-ascending_logic = True if sort_order == "Menaik (Low to High / A-Z)" else False
+sort_order = st.sidebar.radio("Aturan:", ("Menurun", "Menaik"))
+ascending_logic = True if sort_order == "Menaik" else False
 sort_col = {"Perubahan (%)": "Chg%", "Harga": "Harga", "Nama Emiten": "Ticker"}[sort_by]
 
 @st.cache_data(ttl=15)
@@ -40,7 +34,6 @@ def get_data_watchlist(tickers):
         try:
             d = yf.download(t, period="2d", interval="1d", progress=False)
             if not d.empty:
-                # Menghindari error Multi-Index
                 curr = float(d['Close'].iloc[-1])
                 prev = float(d['Close'].iloc[-2]) if len(d) > 1 else curr
                 combined.append({"Ticker": t.replace(".JK", ""), "Harga": curr, "Chg%": round(((curr-prev)/prev)*100, 2)})
@@ -48,125 +41,106 @@ def get_data_watchlist(tickers):
     return pd.DataFrame(combined)
 
 # --- HEADER ---
-st.title("🚀 StockPro Ultimate 2026")
-st.write(f"🕒 **Waktu Realtime (WIB):** {datetime.now(tz).strftime('%d %b %Y | %H:%M:%S')}")
+st.title("🚀 StockPro Precision Intelligence")
+st.write(f"🕒 **Update:** {datetime.now(tz).strftime('%H:%M:%S')} WIB")
 
 # --- WATCHLIST ---
 df_w = get_data_watchlist(manual_list)
-df_s = pd.DataFrame() # Inisialisasi default
-
+df_s = pd.DataFrame()
 if not df_w.empty:
     df_f = df_w[(df_w['Harga'] >= min_h) & (df_w['Harga'] <= max_h)]
-    if not df_f.empty:
-        df_s = df_f.sort_values(by=sort_col, ascending=ascending_logic).reset_index(drop=True)
-        st.subheader(f"🏆 Watchlist Terpantau")
-        cols = st.columns(min(5, len(df_s)))
-        for i in range(min(5, len(df_s))):
-            with cols[i]:
-                st.metric(label=df_s.iloc[i]['Ticker'], value=f"Rp {df_s.iloc[i]['Harga']:,.0f}", delta=f"{df_s.iloc[i]['Chg%']}%")
-        with st.expander("📂 Lihat Seluruh Daftar Watchlist"):
-            st.dataframe(df_s, use_container_width=True, hide_index=True)
+    df_s = df_f.sort_values(by=sort_col, ascending=ascending_logic).reset_index(drop=True)
+    cols = st.columns(min(5, len(df_s)))
+    for i in range(min(5, len(df_s))):
+        with cols[i]:
+            st.metric(label=df_s.iloc[i]['Ticker'], value=f"Rp {df_s.iloc[i]['Harga']:,.0f}", delta=f"{df_s.iloc[i]['Chg%']}%")
 
 st.divider()
 
-# --- ANALISIS GRAFIK LENGKAP ---
+# --- ANALISIS GRAFIK ---
 ca, cb = st.columns([1, 1])
 with ca:
-    default_ticker = df_s.iloc[0]['Ticker'] if not df_s.empty else "BBRI"
-    target_input = st.text_input("🔍 Kode Saham Analisis:", value=default_ticker).upper()
+    target = st.text_input("🔍 Kode Analisis:", value=df_s.iloc[0]['Ticker'] if not df_s.empty else "BBRI").upper()
 with cb:
-    tf = st.selectbox("⏱️ Pilih Timeframe:", ("1 Menit", "60 Menit", "1 Hari"))
+    tf = st.selectbox("⏱️ Timeframe:", ("1 Menit", "60 Menit", "1 Hari"))
 
 tf_m, pd_m = {"1 Menit": "1m", "60 Menit": "60m", "1 Hari": "1d"}, {"1 Menit": "1d", "60 Menit": "1mo", "1 Hari": "1y"}
 
 try:
-    # Mengambil data yang cukup untuk look-back 30 periode
-    df = yf.download(f"{target_input}.JK", period="2y" if tf=="1 Hari" else "5d", interval=tf_m[tf], progress=False)
-    
+    df = yf.download(f"{target}.JK", period="5d" if tf != "1 Hari" else "2y", interval=tf_m[tf], progress=False)
     if len(df) > 30:
         if tf != "1 Hari": df.index = df.index.tz_convert('Asia/Jakarta')
-        
-        # Flattening data untuk menghindari error index
-        cl = df['Close'].values.flatten()
-        hi = df['High'].values.flatten()
-        lo = df['Low'].values.flatten()
-        op = df['Open'].values.flatten()
-        vl = df['Volume'].values.flatten()
+        cl, hi, lo, op, vl = [df[c].values.flatten() for c in ['Close', 'High', 'Low', 'Open', 'Volume']]
 
-        # --- INDIKATOR TEKNIS ---
+        # INDIKATOR
         ma20 = pd.Series(cl).rolling(20).mean()
         std20 = pd.Series(cl).rolling(20).std()
         u_bb, l_bb = ma20 + (std20 * 2), ma20 - (std20 * 2)
-        diff = pd.Series(cl).diff(); gain = (diff.where(diff > 0, 0)).rolling(14).mean(); loss = (-diff.where(diff < 0, 0)).rolling(14).mean()
-        rsi = 100 - (100 / (1 + (gain/loss)))
-        e12 = pd.Series(cl).ewm(span=12, adjust=False).mean(); e26 = pd.Series(cl).ewm(span=26, adjust=False).mean()
-        macd_line = e12 - e26; signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        diff = pd.Series(cl).diff(); g = (diff.where(diff > 0, 0)).rolling(14).mean(); l = (-diff.where(diff < 0, 0)).rolling(14).mean()
+        rsi = (100 - (100 / (1 + (g/l)))).fillna(50)
+        e12 = pd.Series(cl).ewm(span=12).mean(); e26 = pd.Series(cl).ewm(span=26).mean()
+        macd = e12 - e26; sig = macd.ewm(span=9).mean()
 
-        # --- PREDIKSI 10 PERIODE (LOOK-BACK 30P) ---
-        future_prices, future_dates = [], []
-        sim_cl, sim_vl = list(cl[-30:]), list(vl[-30:])
+        # --- ALGORITMA PREDIKSI PRESISI (10P) ---
+        f_prices, f_dates = [], []
+        temp_cl, temp_vl = list(cl[-30:]), list(vl[-30:])
         last_dt = df.index[-1]
-        
-        # Penentuan step waktu
-        if len(df) > 1: step = df.index[-1] - df.index[-2]
-        else: step = timedelta(minutes=1)
+        step = df.index[-1] - df.index[-2] if len(df) > 1 else timedelta(minutes=1)
 
         for i in range(1, 11):
-            y_lookback = np.array(sim_cl[-30:])
-            slope, _ = np.polyfit(np.arange(30), y_lookback, 1)
+            # 1. Slope Calculation (Regression)
+            x = np.arange(30)
+            y = np.array(temp_cl[-30:])
+            slope, intercept = np.polyfit(x, y, 1)
             
-            vol_avg = np.mean(sim_vl[-30:])
-            vol_ratio = sim_vl[-1] / vol_avg if vol_avg > 0 else 1
+            # 2. Advanced Weighting (Volume & Momentum)
+            v_avg = np.mean(temp_vl[-30:])
+            v_ratio = temp_vl[-1] / v_avg if v_avg > 0 else 1
+            curr_rsi = rsi.iloc[-1]
             
-            # Momentum weight
-            curr_rsi = rsi.iloc[-1] if not np.isnan(rsi.iloc[-1]) else 50
-            rsi_w = (35 - curr_rsi) * 0.002 if curr_rsi < 35 else (65 - curr_rsi) * 0.002 if curr_rsi > 65 else 0
+            # Reversal adjustment (RSI)
+            rsi_adj = (40 - curr_rsi) * 0.003 if curr_rsi < 35 else (60 - curr_rsi) * 0.003 if curr_rsi > 65 else 0
+            # Volatility impulse
+            vol_impulse = (slope * 0.1 * v_ratio)
             
-            vol_impact = (sim_cl[-1] * 0.0005 * vol_ratio) if sim_cl[-1] > sim_cl[-2] else -(sim_cl[-1] * 0.0005 * vol_ratio)
+            # Next Price Calculation
+            next_p = temp_cl[-1] + slope + (temp_cl[-1] * rsi_adj) + vol_impulse
+            f_prices.append(next_p)
+            f_dates.append(last_dt + (step * i))
             
-            next_p = sim_cl[-1] + slope + (sim_cl[-1] * rsi_w) + vol_impact
-            future_prices.append(next_p)
-            future_dates.append(last_dt + (step * i))
-            
-            sim_cl.append(next_p)
-            sim_vl.append(vol_avg)
+            # Update buffers
+            temp_cl.append(next_p)
+            temp_vl.append(v_avg)
 
-        # --- DISPLAY METRICS ---
-        st.markdown(f"### 📈 Live: {target_input}.JK")
+        # UI METRICS
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Harga Terkini", f"Rp {cl[-1]:,.0f}", f"{cl[-1]-op[-1]:,.0f}")
-        m2.metric("MACD Status", "Bullish" if macd_line.iloc[-1] > signal_line.iloc[-1] else "Bearish")
-        m3.metric("RSI (14)", f"{rsi.iloc[-1]:.2f}")
-        m4.metric("Prediksi T+10", f"Rp {future_prices[-1]:,.0f}")
+        m1.metric("Harga Real", f"Rp {cl[-1]:,.0f}")
+        m2.metric("Signal", "BUY" if macd.iloc[-1] > sig.iloc[-1] else "SELL")
+        m3.metric("RSI", f"{rsi.iloc[-1]:.1f}")
+        m4.metric("Prediksi T+10", f"Rp {f_prices[-1]:,.0f}")
 
-        # --- GRAFIK ---
-        fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.4, 0.15, 0.2, 0.25],
-                           subplot_titles=("Price & Predictive Intelligence (10P)", "Volume", "MACD", "RSI"))
-        
+        # GRAFIK
+        fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.4, 0.1, 0.2, 0.2])
         fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="Price"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=u_bb, line=dict(color='rgba(255,255,255,0.2)'), name="Upper BB"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=l_bb, line=dict(color='rgba(255,255,255,0.2)'), name="Lower BB", fill='tonexty'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=future_dates, y=future_prices, line=dict(color='yellow', width=3, dash='dot'), name="Prediction 10P"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="AI Prediction"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=u_bb, line=dict(color='rgba(255,255,255,0.1)'), name="Upper BB"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=l_bb, line=dict(color='rgba(255,255,255,0.1)'), name="Lower BB", fill='tonexty'), row=1, col=1)
         
-        vol_colors = ['red' if c < o else 'green' for c, o in zip(cl, op)]
-        fig.add_trace(go.Bar(x=df.index, y=vl, name="Volume", marker_color=vol_colors), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=macd_line, name="MACD", line=dict(color='cyan')), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=signal_line, name="Signal", line=dict(color='red')), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=rsi, name="RSI", line=dict(color='magenta')), row=4, col=1)
+        v_colors = ['red' if c < o else 'green' for c, o in zip(cl, op)]
+        fig.add_trace(go.Bar(x=df.index, y=vl, marker_color=v_colors, name="Volume"), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=macd, line=dict(color='cyan'), name="MACD"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=sig, line=dict(color='orange'), name="Signal"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=rsi, line=dict(color='magenta'), name="RSI"), row=4, col=1)
         
-        fig.update_layout(template="plotly_dark", height=1000, xaxis_rangeslider_visible=False, xaxis4=dict(tickformat="%H:%M\n%d %b"))
+        fig.update_layout(template="plotly_dark", height=900, xaxis_rangeslider_visible=False, xaxis4=dict(tickformat="%H:%M\n%d %b"))
         st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
-        # --- TABEL PREDIKSI ---
-        st.subheader("📋 Estimasi Harga 10 Periode Ke Depan")
-        pred_df = pd.DataFrame({
+        # TABEL
+        st.subheader("📋 Detail Proyeksi Harga")
+        st.table(pd.DataFrame({
             "Periode": [f"T+{i}" for i in range(1, 11)],
-            "Waktu Estimasi": [d.strftime('%H:%M:%S (%d %b)') for d in future_dates],
-            "Harga Proyeksi": [f"Rp {p:,.2f}" for p in future_prices]
-        })
-        st.table(pred_df)
-    else:
-        st.warning("Data tidak cukup untuk melakukan analisa teknikal (minimal 30 bar).")
-
+            "Waktu": [d.strftime('%H:%M (%d %b)') for d in f_dates],
+            "Estimasi Harga": [f"Rp {p:,.2f}" for p in f_prices]
+        }))
 except Exception as e:
-    st.error(f"Gagal memproses data emiten {target_input}. Pastikan kode benar. (Detail: {e})")
+    st.info("Pilih emiten yang valid untuk memulai analisis.")
