@@ -13,19 +13,15 @@ tz = pytz.timezone('Asia/Jakarta')
 
 # --- SIDEBAR: PANEL KONTROL ---
 st.sidebar.header("🛠️ Panel Kontrol")
-
-# A. INPUT WATCHLIST
 st.sidebar.subheader("📝 Kelola Watchlist")
 txt_input = st.sidebar.text_area("Input Kode (Tanpa .JK):", 
                                 "BBRI, TLKM, ASII, ADRO, GOTO, BMRI, BBNI, UNTR, AMRT, BRIS, BBCA, ANTM, MDKA, PTBA")
 manual_list = [f"{t.strip().upper()}.JK" for t in txt_input.split(",") if t.strip()][:30]
 
-# B. FILTER HARGA
 st.sidebar.subheader("💰 Filter Harga")
 min_h = st.sidebar.number_input("Harga Minimum (Rp):", value=0, step=50)
 max_h = st.sidebar.number_input("Harga Maksimum (Rp):", value=500000, step=100)
 
-# C. SORTING
 st.sidebar.subheader("↕️ Susunan Watchlist")
 sort_by = st.sidebar.selectbox("Susun Berdasarkan:", ("Perubahan (%)", "Harga", "Nama Emiten"))
 sort_order = st.sidebar.radio("Aturan:", ("Menurun (Z-A / High-Low)", "Menaik (A-Z / Low-High)"))
@@ -42,34 +38,25 @@ def get_data_watchlist(tickers):
                 cl_data = d['Close'].values.flatten()
                 curr = float(cl_data[-1])
                 prev = float(cl_data[-2]) if len(cl_data) > 1 else curr
-                combined.append({
-                    "Ticker": t.replace(".JK", ""), 
-                    "Harga": curr, 
-                    "Chg%": round(((curr-prev)/prev)*100, 2)
-                })
+                combined.append({"Ticker": t.replace(".JK", ""), "Harga": curr, "Chg%": round(((curr-prev)/prev)*100, 2)})
         except: continue
     return pd.DataFrame(combined)
 
 # --- HEADER ---
 st.title("🚀 StockPro Precision Intelligence")
-st.write(f"🕒 **Waktu Terkini:** {datetime.now(tz).strftime('%d %b %Y | %H:%M:%S')} WIB")
+st.write(f"🕒 **Waktu Bursa (WIB):** {datetime.now(tz).strftime('%d %b %Y | %H:%M:%S')}")
 
 # --- PROSES WATCHLIST ---
 df_w = get_data_watchlist(manual_list)
 df_s = pd.DataFrame()
-
 if not df_w.empty:
     df_f = df_w[(df_w['Harga'] >= min_h) & (df_w['Harga'] <= max_h)]
     if not df_f.empty:
         df_s = df_f.sort_values(by=sort_col, ascending=ascending_logic).reset_index(drop=True)
-        
         cols = st.columns(min(5, len(df_s)))
         for i in range(min(5, len(df_s))):
             with cols[i]:
-                st.metric(label=df_s.iloc[i]['Ticker'], 
-                          value=f"Rp {df_s.iloc[i]['Harga']:,.0f}", 
-                          delta=f"{df_s.iloc[i]['Chg%']}%")
-        
+                st.metric(label=df_s.iloc[i]['Ticker'], value=f"Rp {df_s.iloc[i]['Harga']:,.0f}", delta=f"{df_s.iloc[i]['Chg%']}%")
         with st.expander("📂 Lihat Seluruh Daftar Watchlist"):
             st.dataframe(df_s, use_container_width=True, hide_index=True)
 
@@ -93,65 +80,48 @@ try:
         if tf != "1 Hari": df.index = df.index.tz_convert('Asia/Jakarta')
         cl, hi, lo, op, vl = [df[c].values.flatten() for c in ['Close', 'High', 'Low', 'Open', 'Volume']]
 
-        # INDIKATOR TEKNIKAL
-        ma20 = pd.Series(cl).rolling(20).mean()
-        std20 = pd.Series(cl).rolling(20).std()
+        # INDIKATOR
+        ma20 = pd.Series(cl).rolling(20).mean(); std20 = pd.Series(cl).rolling(20).std()
         u_bb, l_bb = ma20 + (std20 * 2), ma20 - (std20 * 2)
-        diff = pd.Series(cl).diff()
-        g = (diff.where(diff > 0, 0)).rolling(14).mean()
-        l = (-diff.where(diff < 0, 0)).rolling(14).mean()
+        diff = pd.Series(cl).diff(); g = (diff.where(diff > 0, 0)).rolling(14).mean(); l = (-diff.where(diff < 0, 0)).rolling(14).mean()
         rsi = (100 - (100 / (1 + (g/l)))).fillna(50)
         e12 = pd.Series(cl).ewm(span=12).mean(); e26 = pd.Series(cl).ewm(span=26).mean()
         macd = e12 - e26; sig = macd.ewm(span=9).mean()
 
-        # --- ALGORITMA PREDIKSI CANDLESTICK PATTERN (LOOKBACK 40) ---
+        # --- LOGIKA WAKTU REALTIME SINKRON ---
         f_prices, f_dates = [], []
-        temp_cl = list(cl[-40:])
-        temp_op = list(op[-40:])
-        temp_hi = list(hi[-40:])
-        temp_lo = list(lo[-40:])
+        temp_cl = list(cl[-40:]); temp_op = list(op[-40:]); temp_hi = list(hi[-40:]); temp_lo = list(lo[-40:])
         
+        # Hitung interval waktu bursa yang akurat
+        if len(df) > 1:
+            step = df.index[-1] - df.index[-2]
+        else:
+            step = timedelta(minutes=1 if tf == "1 Menit" else 60 if tf == "60 Menit" else 1440)
+            
         last_dt = df.index[-1]
-        step = df.index[-1] - df.index[-2] if len(df) > 1 else timedelta(minutes=1)
 
-        candle_sentiment = []
-        for j in range(len(temp_cl)):
-            body = temp_cl[j] - temp_op[j]
-            total_range = temp_hi[j] - temp_lo[j] if temp_hi[j] != temp_lo[j] else 1
-            candle_sentiment.append(body / total_range)
-        
-        avg_sent = np.mean(candle_sentiment)
-        volat = np.std(cl[-40:]) / np.mean(cl[-40:])
-
+        # Prediksi 10 Periode
         for i in range(1, 11):
             decay = 1 / (1 + (i * 0.15))
             slope, _ = np.polyfit(np.arange(40), np.array(temp_cl[-40:]), 1)
+            
+            # Candlestick Pattern Sentiment (Lookback 40)
+            candle_sent = np.mean([(temp_cl[j]-temp_op[j])/(temp_hi[j]-temp_lo[j] if temp_hi[j]!=temp_lo[j] else 1) for j in range(len(temp_cl))])
+            volat = np.std(cl[-40:]) / np.mean(cl[-40:])
             dist_mean = (ma20.iloc[-1] - temp_cl[-1]) / temp_cl[-1]
             
-            change = (slope * decay) + (temp_cl[-1] * avg_sent * volat) + (temp_cl[-1] * dist_mean * 0.05)
+            change = (slope * decay) + (temp_cl[-1] * candle_sent * volat) + (temp_cl[-1] * dist_mean * 0.05)
             change = np.clip(change, -temp_cl[-1]*0.015, temp_cl[-1]*0.015)
             
             next_p = temp_cl[-1] + change
             f_prices.append(next_p)
-            f_dates.append(last_dt + (step * i))
+            f_dates.append(last_dt + (step * i)) # Waktu Prediksi Inline
             temp_cl.append(next_p)
-
-        # --- UI METRICS ---
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Harga Terakhir", f"Rp {cl[-1]:,.0f}")
-        m2.metric("Sentimen 40P", "Bullish" if avg_sent > 0 else "Bearish")
-        m3.metric("RSI (14)", f"{rsi.iloc[-1]:.1f}")
-        m4.metric("Prediksi T+10", f"Rp {f_prices[-1]:,.0f}")
 
         # --- GRAFIK DENGAN SUMBU X REALTIME ---
         
-        fig = make_subplots(
-            rows=4, cols=1, 
-            shared_xaxes=True, 
-            vertical_spacing=0.05, 
-            row_heights=[0.4, 0.1, 0.2, 0.2],
-            subplot_titles=("Price & Pattern Prediction (10P)", "Volume", "MACD", "RSI")
-        )
+        fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.4, 0.1, 0.2, 0.2],
+                           subplot_titles=("Price Pattern Analysis (10P)", "Volume", "MACD", "RSI"))
         
         fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="History"), row=1, col=1)
         fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="Prediction"), row=1, col=1)
@@ -164,20 +134,14 @@ try:
         fig.add_trace(go.Scatter(x=df.index, y=sig, line=dict(color='orange'), name="Signal"), row=3, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=rsi, line=dict(color='magenta'), name="RSI"), row=4, col=1)
         
-        # Pengaturan Sumbu X Realtime
-        fig.update_xaxes(showticklabels=True, tickformat="%H:%M\n%d %b", row=4, col=1)
+        # PERBAIKAN SUMBU X: Aktifkan label di subplot terakhir
+        fig.update_xaxes(showticklabels=True, tickformat="%H:%M\n%d %b", gridcolor='gray', griddash='dot', row=4, col=1)
         fig.update_layout(template="plotly_dark", height=900, xaxis_rangeslider_visible=False, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- TABEL ---
-        st.subheader("📋 Tabel Proyeksi Harga")
-        st.table(pd.DataFrame({
-            "Periode": [f"T+{i}" for i in range(1, 11)],
-            "Waktu": [d.strftime('%H:%M (%d %b)') for d in f_dates],
-            "Harga": [f"Rp {p:,.2f}" for p in f_prices]
-        }))
+        st.subheader("📋 Tabel Proyeksi")
+        st.table(pd.DataFrame({"Periode": [f"T+{i}" for i in range(1,11)], "Waktu": [d.strftime('%H:%M (%d %b)') for d in f_dates], "Harga": [f"Rp {p:,.2f}" for p in f_prices]}))
     else:
-        st.warning(f"Data historis {target} tidak mencukupi untuk analisa lookback 40 bar.")
-
+        st.warning("Data kurang (Min 40 bar).")
 except Exception as e:
-    st.error(f"Terjadi kesalahan: {e}")
+    st.error(f"Error: {e}")
