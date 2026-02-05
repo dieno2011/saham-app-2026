@@ -8,10 +8,9 @@ from datetime import datetime, timedelta
 import pytz
 
 # 1. KONFIGURASI DASAR
-st.set_page_config(page_title="StockPro Precision v4.3", layout="wide")
+st.set_page_config(page_title="StockPro Precision v4.4", layout="wide")
 tz = pytz.timezone('Asia/Jakarta')
 
-# --- INISIALISASI SESSION STATE (KUNCI STABILITAS) ---
 if 'ticker' not in st.session_state:
     st.session_state.ticker = "BBRI"
 
@@ -55,19 +54,15 @@ st.write(f"🕒 **Update:** {datetime.now(tz).strftime('%d %b %Y | %H:%M:%S')} W
 
 # --- BAGIAN 1: WATCHLIST (INTERAKTIF) ---
 df_w = get_watchlist_data(manual_list)
-
 if not df_w.empty:
     df_f = df_w[(df_w['Harga'] >= min_h) & (df_w['Harga'] <= max_h)]
     df_s = df_f.sort_values(by=sort_options[sort_by_label], ascending=ascending_logic)
     
     with st.expander("📋 Daftar Pantau (Klik Baris untuk Analisis)", expanded=True):
-        # Seleksi baris menggunakan on_select="rerun"
         selection = st.dataframe(
             df_s.style.format({"Harga": "{:,.0f}", "High": "{:,.0f}", "Low": "{:,.0f}", "Chg%": "{:+.2f}%"}),
             use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row"
         )
-        
-        # Logika Update dari Klik Tabel
         if selection and selection.selection.rows:
             new_selection = df_s.iloc[selection.selection.rows[0]]['Ticker']
             if new_selection != st.session_state.ticker:
@@ -79,16 +74,13 @@ st.divider()
 # --- BAGIAN 2: ANALISIS ---
 ca, cb = st.columns([1, 1])
 with ca:
-    # Menggunakan key agar input manual independen namun tersinkronisasi
     target = st.text_input("📝 Kode Saham Analisis:", value=st.session_state.ticker).upper()
-    # Update session state jika input manual berubah (tanpa paksa rerun berlebih)
     st.session_state.ticker = target
 with cb:
     tf_label = st.selectbox("⏱️ Timeframe:", 
                       ("1 Menit", "5 Menit", "10 Menit", "15 Menit", "30 Menit", 
                        "60 Menit", "2 Jam", "3 Jam", "1 Hari", "1 Minggu", "1 Bulan"), index=8)
 
-# --- MAPPING DATA ---
 tf_map = {"1 Menit":"1m", "5 Menit":"5m", "10 Menit":"10m", "15 Menit":"15m", "30 Menit":"30m", "60 Menit":"60m", "2 Jam":"60m", "3 Jam":"60m", "1 Hari":"1d", "1 Minggu":"1wk", "1 Bulan":"1mo"}
 pd_map = {"1 Menit":"1d", "5 Menit":"5d", "10 Menit":"5d", "15 Menit":"5d", "30 Menit":"5d", "60 Menit":"1mo", "2 Jam":"1mo", "3 Jam":"1mo", "1 Hari":"2y", "1 Minggu":"max", "1 Bulan":"max"}
 
@@ -101,62 +93,60 @@ try:
             
         cl, hi, lo, op, vl = [df[c].values.flatten() for c in ['Close', 'High', 'Low', 'Open', 'Volume']]
 
-        # --- HITUNG INDIKATOR ---
+        # --- INDIKATOR ---
         ma20 = pd.Series(cl).rolling(20).mean()
         ma50 = pd.Series(cl).rolling(50).mean()
-        # Stochastic Oscillator
         l14, h14 = pd.Series(lo).rolling(14).min(), pd.Series(hi).rolling(14).max()
         stoch_k = 100 * ((pd.Series(cl) - l14) / (h14 - l14))
         stoch_d = stoch_k.rolling(3).mean()
-        # RSI
         diff = pd.Series(cl).diff(); g = (diff.where(diff > 0, 0)).rolling(14).mean(); l_loss = (-diff.where(diff < 0, 0)).rolling(14).mean()
         rsi = (100 - (100 / (1 + (g/(l_loss.replace(0, 0.001)))))).fillna(50)
 
-        # --- SUMMARY DASHBOARD ---
+        # --- SUMMARY ---
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Live Price", f"Rp {cl[-1]:,.0f}")
         m2.metric("High", f"Rp {hi.max():,.0f}")
         m3.metric("Low", f"Rp {lo.min():,.0f}")
-        
-        # Logika AI Terpadu (RSI + Stochastic)
-        if rsi.iloc[-1] < 35 and stoch_k.iloc[-1] < 20: saran, warna = "STRONG BUY", "#00FF00"
-        elif rsi.iloc[-1] > 65 and stoch_k.iloc[-1] > 80: saran, warna = "STRONG SELL", "#FF0000"
-        else: saran, warna = "HOLD / WAIT", "#AAAAAA"
-        m4.markdown(f"**Saran AI:** <span style='color:{warna}; font-size:18px; font-weight:bold;'>{saran}</span>", unsafe_allow_html=True)
+        saran = "STRONG BUY" if rsi.iloc[-1] < 30 else "STRONG SELL" if rsi.iloc[-1] > 70 else "HOLD"
+        m4.markdown(f"**Saran AI:** `{saran}`")
 
-        # --- PREDIKSI HARGA ---
+        # --- FORMULA PREDIKSI TERBARU (DI-PERBAIKI) ---
         f_prices, f_dates = [], []
-        t_cl = list(cl[-40:]); last_dt = df.index[-1]
+        t_cl = list(cl[-40:])
+        last_dt = df.index[-1]
         step = df.index[-1] - df.index[-2] if len(df) > 1 else timedelta(minutes=1)
-        weights = np.exp(np.linspace(-1., 0., 40)); weights /= weights.sum()
+        
+        # Bobot Eksponensial: Fokus pada data paling baru
+        weights = np.exp(np.linspace(-1., 0., 40))
+        weights /= weights.sum()
 
         for i in range(1, 11):
-            move = (np.sum(np.array(t_cl[-40:]) * weights) - t_cl[-1]) * -0.15
-            next_p = t_cl[-1] + move + np.random.normal(0, np.std(t_cl[-10:])*0.05)
-            f_prices.append(next_p); f_dates.append(last_dt + (step * i)); t_cl.append(next_p)
+            window = np.array(t_cl[-40:])
+            weighted_mean = np.sum(window * weights)
+            # Slope: Arah tren berdasarkan selisih harga terakhir dengan rata-rata berbobot
+            slope = (window[-1] - weighted_mean) / 40
+            # Faktor peluruhan (decay) agar prediksi tidak "terbang" terlalu jauh
+            decay = 1 / (1 + (i * 0.1))
+            move = (slope * decay) + (np.random.normal(0, np.std(window[-10:]) * 0.05))
+            next_p = t_cl[-1] + move
+            f_prices.append(next_p)
+            f_dates.append(last_dt + (step * i))
+            t_cl.append(next_p)
 
-        # --- VISUALISASI GRAFIK ---
+        # --- GRAFIK ---
         
         fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
-                           row_heights=[0.6, 0.2, 0.2], subplot_titles=("Price, MA & AI Prediction", "Stochastic Oscillator", "Volume"))
+                           row_heights=[0.6, 0.2, 0.2], subplot_titles=("Price & Prediction", "Stochastic Oscillator", "Volume"))
         
-        # Row 1: Price
         fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="Price"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=ma20, line=dict(color='#00FFFF', width=1.5), name="MA20"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=ma50, line=dict(color='#FF00FF', width=1.5), name="MA50"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=2, dash='dot'), name="Predict"), row=1, col=1)
-        
-        # Row 2: Stochastic
+        fig.add_trace(go.Scatter(x=df.index, y=ma20, line=dict(color='#00FFFF', width=1), name="MA20"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=2, dash='dot'), name="AI Predict"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=stoch_k, line=dict(color='white', width=1), name="%K"), row=2, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=stoch_d, line=dict(color='orange', width=1), name="%D"), row=2, col=1)
-        fig.add_hline(y=80, line_dash="dash", line_color="red", opacity=0.5, row=2, col=1)
-        fig.add_hline(y=20, line_dash="dash", line_color="green", opacity=0.5, row=2, col=1)
-        
-        # Row 3: Volume
         fig.add_trace(go.Bar(x=df.index, y=vl, marker_color=['#FF3131' if c < o else '#00D100' for c, o in zip(cl, op)], name="Volume"), row=3, col=1)
 
         fig.update_layout(template="plotly_dark", height=900, xaxis_rangeslider_visible=False, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e:
-    st.info("Pilih emiten dari tabel atau ketik kode saham untuk memulai analisis.")
+    st.info("Sistem siap. Silakan pilih saham atau ketik kode.")
