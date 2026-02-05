@@ -78,7 +78,7 @@ try:
         if tf != "1 Hari": df.index = df.index.tz_convert('Asia/Jakarta')
         cl, hi, lo, op, vl = [df[c].values.flatten() for c in ['Close', 'High', 'Low', 'Open', 'Volume']]
 
-        # INDIKATOR
+        # --- HITUNG INDIKATOR ---
         ma20 = pd.Series(cl).rolling(20).mean()
         std20 = pd.Series(cl).rolling(20).std()
         u_bb, l_bb = ma20 + (std20 * 2), ma20 - (std20 * 2)
@@ -92,61 +92,71 @@ try:
         # --- LOGIKA PREDIKSI ---
         f_prices, f_dates = [], []
         t_cl, t_op, t_hi, t_lo = list(cl[-40:]), list(op[-40:]), list(hi[-40:]), list(lo[-40:])
-        
         step = df.index[-1] - df.index[-2] if len(df) > 1 else timedelta(minutes=1)
         last_dt = df.index[-1]
 
         for i in range(1, 11):
             decay = 1 / (1 + (i * 0.15))
             slope, _ = np.polyfit(np.arange(40), np.array(t_cl[-40:]), 1)
-            
-            # Sentiment Calculation with Guard
-            sent_list = []
-            for j in range(len(t_cl)):
-                den = (t_hi[j] - t_lo[j])
-                sent_list.append((t_cl[j] - t_op[j]) / den if den != 0 else 0)
-            
+            sent_list = [((t_cl[j]-t_op[j])/(t_hi[j]-t_lo[j] if t_hi[j]!=t_lo[j] else 1)) for j in range(len(t_cl))]
             candle_sent = np.mean(sent_list)
             volat = np.std(cl[-40:]) / np.mean(cl[-40:])
             dist_mean = (ma20.iloc[-1] - t_cl[-1]) / t_cl[-1] if not np.isnan(ma20.iloc[-1]) else 0
-            
             change = (slope * decay) + (t_cl[-1] * candle_sent * volat) + (t_cl[-1] * dist_mean * 0.05)
             change = np.clip(change, -t_cl[-1]*0.015, t_cl[-1]*0.015)
-            
             next_p = t_cl[-1] + change
             f_prices.append(next_p)
             f_dates.append(last_dt + (step * i))
             t_cl.append(next_p); t_op.append(t_cl[-2]); t_hi.append(next_p); t_lo.append(next_p)
 
-        # --- GRAFIK ---
+        # --- GRAFIK TERPADU (OVERLAY) ---
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, 
+                           row_heights=[0.8, 0.2], subplot_titles=(f"Chart {target} - Multi Indicator Overlay", "Volume"))
         
-        fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.4, 0.1, 0.2, 0.2],
-                           subplot_titles=("Analisis Pola Candlestick (10P Prediction)", "Volume", "MACD", "RSI"))
+        # 1. Candlestick & Prediction
+        fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="Candle"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="AI Predict"), row=1, col=1)
         
-        fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="History"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="Prediction"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=u_bb, line=dict(color='rgba(255,255,255,0.1)'), name="Upper BB"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=l_bb, line=dict(color='rgba(255,255,255,0.1)'), name="Lower BB", fill='tonexty'), row=1, col=1)
-        
+        # 2. Bollinger Bands (Overlay)
+        fig.add_trace(go.Scatter(x=df.index, y=u_bb, line=dict(color='rgba(173,216,230,0.3)'), name="BB Upper", visible='legendonly'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=l_bb, line=dict(color='rgba(173,216,230,0.3)'), name="BB Lower", fill='tonexty', visible='legendonly'), row=1, col=1)
+
+        # 3. MACD (Overlay - di skala harga)
+        # Kita normalisasi sedikit agar MACD bisa terlihat di chart harga utama atau gunakan sumbu y2 jika perlu.
+        # Untuk kemudahan baca, kita taruh di chart utama dengan status 'visible=legendonly'
+        fig.add_trace(go.Scatter(x=df.index, y=macd + cl[-1], line=dict(color='cyan', width=1), name="MACD (Offset)", visible='legendonly'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=sig + cl[-1], line=dict(color='orange', width=1), name="MACD Signal", visible='legendonly'), row=1, col=1)
+
+        # 4. RSI (Overlay - Skala 0-100 tapi diletakkan di area harga)
+        # Tips: Klik legend RSI untuk memunculkan garis pink di grafik
+        fig.add_trace(go.Scatter(x=df.index, y=(rsi * (cl.max()/100)), line=dict(color='magenta', width=1), name="RSI (Scaled)", visible='legendonly'), row=1, col=1)
+
+        # 5. Volume (Panel Bawah)
         v_colors = ['red' if c < o else 'green' for c, o in zip(cl, op)]
         fig.add_trace(go.Bar(x=df.index, y=vl, marker_color=v_colors, name="Volume"), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=macd, line=dict(color='cyan'), name="MACD"), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=sig, line=dict(color='orange'), name="Signal"), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=rsi, line=dict(color='magenta'), name="RSI"), row=4, col=1)
+
+        # --- FIX: AKTIFKAN WAKTU PADA SUMBU X ---
+        fig.update_xaxes(showticklabels=True, tickformat="%H:%M\n%d %b", tickangle=0, row=1, col=1)
+        fig.update_xaxes(showticklabels=True, tickformat="%H:%M\n%d %b", tickangle=0, row=2, col=1)
         
-        # FIX: Sumbu X Realtime dipaksa muncul di subplot terakhir
-        fig.update_xaxes(showticklabels=True, tickformat="%H:%M\n%d %b", tickangle=0, row=4, col=1)
-        fig.update_layout(template="plotly_dark", height=900, xaxis_rangeslider_visible=False, hovermode="x unified")
+        fig.update_layout(
+            template="plotly_dark", 
+            height=850, 
+            xaxis_rangeslider_visible=False, 
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
         
+        st.info("💡 Klik nama indikator di bagian Legend atas untuk memunculkan/menyembunyikan MACD, RSI, atau BB.")
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("📋 Tabel Proyeksi 10 Periode (Realtime)")
+        # --- TABEL ---
+        st.subheader("📋 Data Proyeksi")
         st.table(pd.DataFrame({
             "Periode": [f"T+{i}" for i in range(1,11)],
-            "Waktu Proyeksi": [d.strftime('%H:%M (%d %b)') for d in f_dates],
-            "Harga Estimasi": [f"Rp {p:,.2f}" for p in f_prices]
+            "Waktu": [d.strftime('%H:%M (%d %b)') for d in f_dates],
+            "Harga": [f"Rp {p:,.2f}" for p in f_prices]
         }))
-    else:
-        st.warning("Data tidak ditemukan atau kurang dari 40 bar. Coba timeframe lain.")
+
 except Exception as e:
     st.error(f"Terjadi error: {e}")
