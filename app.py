@@ -8,16 +8,25 @@ from datetime import datetime, timedelta
 import pytz
 
 # 1. KONFIGURASI
-st.set_page_config(page_title="StockPro Precision v3.1", layout="wide")
+st.set_page_config(page_title="StockPro Precision v3.2", layout="wide")
 tz = pytz.timezone('Asia/Jakarta')
 
-# --- SIDEBAR ---
+# --- SIDEBAR: PANEL KONTROL ---
 st.sidebar.header("🛠️ Panel Kontrol")
+st.sidebar.subheader("📝 Kelola Watchlist")
 txt_input = st.sidebar.text_area("Input Kode (Tanpa .JK):", "BBRI, TLKM, ASII, ADRO, GOTO, BMRI, BBNI, UNTR, AMRT, BRIS, BBCA, ANTM, MDKA, PTBA")
 manual_list = [f"{t.strip().upper()}.JK" for t in txt_input.split(",") if t.strip()][:30]
 
+st.sidebar.subheader("💰 Filter Harga")
 min_h = st.sidebar.number_input("Harga Minimum (Rp):", value=0)
 max_h = st.sidebar.number_input("Harga Maksimum (Rp):", value=500000)
+
+# --- FITUR SORTING (DIRUBA URUTANNYA) ---
+st.sidebar.subheader("↕️ Urutan Dropdown")
+sort_by = st.sidebar.selectbox("Susun Berdasarkan:", ("Nama Emiten", "Harga", "Perubahan (%)"))
+sort_order = st.sidebar.radio("Aturan:", ("Menaik (A-Z / Low-High)", "Menurun (Z-A / High-Low)"))
+ascending_logic = True if "Menaik" in sort_order else False
+sort_col = {"Perubahan (%)": "Chg%", "Harga": "Harga", "Nama Emiten": "Ticker"}[sort_by]
 
 @st.cache_data(ttl=15)
 def get_data_watchlist(tickers):
@@ -27,8 +36,11 @@ def get_data_watchlist(tickers):
             d = yf.download(t, period="2d", interval="1d", progress=False)
             if not d.empty and len(d) >= 2:
                 cl_data = d['Close'].values.flatten()
-                combined.append({"Ticker": t.replace(".JK", ""), "Harga": float(cl_data[-1]), 
-                                 "Chg%": round(((cl_data[-1]-cl_data[-2])/cl_data[-2])*100, 2)})
+                combined.append({
+                    "Ticker": t.replace(".JK", ""), 
+                    "Harga": float(cl_data[-1]), 
+                    "Chg%": round(((cl_data[-1]-cl_data[-2])/cl_data[-2])*100, 2)
+                })
         except: continue
     return pd.DataFrame(combined)
 
@@ -36,36 +48,32 @@ def get_data_watchlist(tickers):
 st.title("🚀 StockPro Precision Intelligence")
 st.write(f"🕒 **Update:** {datetime.now(tz).strftime('%H:%M:%S')} WIB")
 
-# --- PROSES & TAMPILKAN WATCHLIST (DIKEMBALIKAN) ---
+# --- PROSES WATCHLIST & DROPDOWN ---
 df_w = get_data_watchlist(manual_list)
-df_s = pd.DataFrame() # Inisialisasi agar tidak error di bawah
+ticker_options = ["BBRI"] # Default jika kosong
 
 if not df_w.empty:
-    # Filter Harga
-    df_s = df_w[(df_w['Harga'] >= min_h) & (df_w['Harga'] <= max_h)]
+    # Terapkan Filter Harga & Sorting
+    df_filtered = df_w[(df_w['Harga'] >= min_h) & (df_w['Harga'] <= max_h)]
+    df_sorted = df_filtered.sort_values(by=sort_col, ascending=ascending_logic)
+    ticker_options = df_sorted['Ticker'].tolist()
     
-    if not df_s.empty:
-        # Menampilkan List Watchlist dalam bentuk Metric Columns
-        cols = st.columns(min(5, len(df_s)))
-        for i in range(len(df_s)):
-            col_idx = i % 5
-            with cols[col_idx]:
-                st.metric(
-                    label=df_s.iloc[i]['Ticker'], 
-                    value=f"Rp {df_s.iloc[i]['Harga']:,.0f}", 
-                    delta=f"{df_s.iloc[i]['Chg%']}%"
-                )
-    else:
-        st.warning("Tidak ada saham yang memenuhi kriteria filter harga.")
+    # Tampilan Metric Singkat (5 Teratas sesuai urutan)
+    if not df_sorted.empty:
+        cols = st.columns(min(5, len(df_sorted)))
+        for i in range(min(5, len(df_sorted))):
+            with cols[i]:
+                st.metric(label=df_sorted.iloc[i]['Ticker'], 
+                          value=f"Rp {df_sorted.iloc[i]['Harga']:,.0f}", 
+                          delta=f"{df_sorted.iloc[i]['Chg%']}%")
 
 st.divider()
 
 # --- ANALISIS GRAFIK ---
 ca, cb = st.columns([1, 1])
 with ca:
-    # Mengambil ticker pertama dari watchlist sebagai default jika tersedia
-    default_ticker = df_s.iloc[0]['Ticker'] if not df_s.empty else "BBRI"
-    target = st.text_input("🔍 Kode Analisis:", value=default_ticker).upper()
+    # DROPDOWN LIST (MENGGANTIKAN TEXT INPUT)
+    target = st.selectbox("🔍 Pilih Saham untuk Analisis:", options=ticker_options).upper()
 with cb:
     tf = st.selectbox("⏱️ Timeframe:", ("1 Menit", "60 Menit", "1 Hari"))
 
@@ -79,13 +87,13 @@ try:
         if tf != "1 Hari": df.index = df.index.tz_convert('Asia/Jakarta')
         cl, hi, lo, op, vl = [df[c].values.flatten() for c in ['Close', 'High', 'Low', 'Open', 'Volume']]
 
-        # HITUNG INDIKATOR
+        # --- INDIKATOR ---
         e12 = pd.Series(cl).ewm(span=12).mean(); e26 = pd.Series(cl).ewm(span=26).mean()
         macd = e12 - e26; sig = macd.ewm(span=9).mean()
         diff = pd.Series(cl).diff(); g = (diff.where(diff > 0, 0)).rolling(14).mean(); l_loss = (-diff.where(diff < 0, 0)).rolling(14).mean()
         rsi = (100 - (100 / (1 + (g/(l_loss.replace(0, 0.001)))))).fillna(50)
 
-        # --- FORMULA PREDIKSI AKURASI TINGGI (40P WEIGHTED) ---
+        # --- FORMULA PREDIKSI WEIGHTED (40P) ---
         f_prices, f_dates = [], []
         t_cl = list(cl[-40:])
         last_dt = df.index[-1]
@@ -109,12 +117,12 @@ try:
         # --- GRAFIK ---
         
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, 
-                           row_heights=[0.8, 0.2], subplot_titles=("Main Chart (Price & Indicators Overlay)", "Volume"))
+                           row_heights=[0.8, 0.2], subplot_titles=(f"Chart {target} - Indicators Overlay", "Volume"))
         
         fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="Price"), row=1, col=1)
         fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="Precision Predict"), row=1, col=1)
 
-        # MACD Group (Satu Tombol)
+        # MACD Group
         fig.add_trace(go.Scatter(x=df.index, y=macd + cl[-1], line=dict(color='cyan', width=1.5), 
                                  name="MACD Group", legendgroup="macd", visible='legendonly'), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=sig + cl[-1], line=dict(color='orange', width=1, dash='dot'), 
@@ -136,8 +144,8 @@ try:
         
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("📋 Proyeksi 10 Periode (Weighted Analysis)")
-        st.table(pd.DataFrame({"Waktu": [d.strftime('%H:%M (%d %b)') for d in f_dates], "Estimasi": [f"Rp {p:,.2f}" for p in f_prices]}))
+        st.subheader("📋 Proyeksi 10 Periode Selanjutnya")
+        st.table(pd.DataFrame({"Waktu": [d.strftime('%H:%M (%d %b)') for d in f_dates], "Estimasi Harga": [f"Rp {p:,.2f}" for p in f_prices]}))
 
 except Exception as e:
-    st.error(f"Error: {e}")
+    st.error(f"Pilih saham valid dari dropdown. Detail: {e}")
