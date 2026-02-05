@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import pytz
 
 # 1. KONFIGURASI
-st.set_page_config(page_title="StockPro Precision v3.3", layout="wide")
+st.set_page_config(page_title="StockPro Precision v3.4", layout="wide")
 tz = pytz.timezone('Asia/Jakarta')
 
 # --- SIDEBAR: PANEL KONTROL ---
@@ -21,7 +21,8 @@ st.sidebar.subheader("💰 Filter Harga")
 min_h = st.sidebar.number_input("Harga Minimum (Rp):", value=0)
 max_h = st.sidebar.number_input("Harga Maksimum (Rp):", value=500000)
 
-st.sidebar.subheader("↕️ Urutan Daftar & Dropdown")
+# PENGATURAN URUTAN DROPDOWN WATCHLIST
+st.sidebar.subheader("↕️ Urutan Dropdown Watchlist")
 sort_by = st.sidebar.selectbox("Susun Berdasarkan:", ("Nama Emiten", "Harga", "Perubahan (%)"))
 sort_order = st.sidebar.radio("Aturan:", ("Menaik (A-Z / Low-High)", "Menurun (Z-A / High-Low)"))
 ascending_logic = True if "Menaik" in sort_order else False
@@ -47,32 +48,30 @@ def get_data_watchlist(tickers):
 st.title("🚀 StockPro Precision Intelligence")
 st.write(f"🕒 **Update:** {datetime.now(tz).strftime('%d %b %Y | %H:%M:%S')} WIB")
 
-# --- BAGIAN 1: WATCHLIST (METRIC CARDS) ---
+# --- BAGIAN 1: WATCHLIST TERPANTAU (DROPDOWN LIST) ---
 df_w = get_data_watchlist(manual_list)
-ticker_options = ["BBRI"] # Default
+watchlist_display = []
 
 if not df_w.empty:
-    df_filtered = df_w[(df_w['Harga'] >= min_h) & (df_w['Harga'] <= max_h)]
-    df_sorted = df_filtered.sort_values(by=sort_col, ascending=ascending_logic)
-    ticker_options = df_sorted['Ticker'].tolist() if not df_sorted.empty else ["BBRI"]
+    st.subheader("📋 Watchlist Terpantau")
+    # Filter & Sort
+    df_f = df_w[(df_w['Harga'] >= min_h) & (df_w['Harga'] <= max_h)]
+    df_s = df_f.sort_values(by=sort_col, ascending=ascending_logic)
     
-    if not df_sorted.empty:
-        st.subheader("📊 Watchlist Terpantau")
-        # Menampilkan kartu metrik (max 5 kolom per baris)
-        cols = st.columns(5)
-        for i in range(len(df_sorted)):
-            with cols[i % 5]:
-                st.metric(label=df_sorted.iloc[i]['Ticker'], 
-                          value=f"Rp {df_sorted.iloc[i]['Harga']:,.0f}", 
-                          delta=f"{df_sorted.iloc[i]['Chg%']}%")
+    # Format teks untuk dropdown agar informatif
+    watchlist_display = [f"{r['Ticker']} | Rp {r['Harga']:,.0f} ({r['Chg%']}%)" for _, r in df_s.iterrows()]
+    
+    # Tampilan Dropdown Watchlist (Hanya untuk memantau)
+    st.selectbox("Daftar Pantau (Urut berdasarkan pilihan Sidebar):", options=watchlist_display, index=0)
+
 st.divider()
 
-# --- BAGIAN 2: ANALISIS (DROPDOWN DI ATAS GRAFIK) ---
+# --- BAGIAN 2: ANALISIS (FREE TEXT INPUT) ---
 st.subheader("🔍 Analisis Teknikal & Prediksi AI")
 ca, cb = st.columns([1, 1])
 with ca:
-    # Dropdown untuk memilih saham yang sedang dianalisa
-    target = st.selectbox("Pilih Emiten untuk Dianalisa:", options=ticker_options)
+    # FREE TEXT UNTUK DIISI MANUAL
+    target = st.text_input("🔍 Masukkan Kode Saham (Contoh: BBRI):", value="BBRI").upper()
 with cb:
     tf = st.selectbox("⏱️ Timeframe:", ("1 Menit", "60 Menit", "1 Hari"))
 
@@ -86,7 +85,7 @@ try:
         if tf != "1 Hari": df.index = df.index.tz_convert('Asia/Jakarta')
         cl, hi, lo, op, vl = [df[c].values.flatten() for c in ['Close', 'High', 'Low', 'Open', 'Volume']]
 
-        # INDIKATOR
+        # --- INDIKATOR ---
         e12 = pd.Series(cl).ewm(span=12).mean(); e26 = pd.Series(cl).ewm(span=26).mean()
         macd = e12 - e26; sig = macd.ewm(span=9).mean()
         diff = pd.Series(cl).diff(); g = (diff.where(diff > 0, 0)).rolling(14).mean(); l_loss = (-diff.where(diff < 0, 0)).rolling(14).mean()
@@ -116,12 +115,12 @@ try:
         # --- GRAFIK ---
         
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, 
-                           row_heights=[0.8, 0.2], subplot_titles=(f"Price Pattern: {target}", "Volume"))
+                           row_heights=[0.8, 0.2], subplot_titles=(f"Price Action & AI Prediction: {target}", "Volume"))
         
         fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="Price"), row=1, col=1)
         fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="Predict"), row=1, col=1)
 
-        # MACD & RSI Overlay
+        # MACD & RSI Overlay (Legend Toggle)
         fig.add_trace(go.Scatter(x=df.index, y=macd + cl[-1], line=dict(color='cyan', width=1.5), 
                                  name="MACD Group", legendgroup="macd", visible='legendonly'), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=sig + cl[-1], line=dict(color='orange', width=1, dash='dot'), 
@@ -141,8 +140,8 @@ try:
         
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("📋 Proyeksi 10 Periode")
+        st.subheader("📋 Tabel Proyeksi Harga")
         st.table(pd.DataFrame({"Waktu": [d.strftime('%H:%M (%d %b)') for d in f_dates], "Estimasi": [f"Rp {p:,.2f}" for p in f_prices]}))
 
 except Exception as e:
-    st.error(f"Gagal memuat data: {e}")
+    st.error(f"Masukkan kode emiten yang valid. Contoh: BBRI, TLKM, GOTO. (Detail: {e})")
