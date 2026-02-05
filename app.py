@@ -8,18 +8,13 @@ from datetime import datetime, timedelta
 import pytz
 
 # 1. KONFIGURASI HALAMAN
-st.set_page_config(page_title="StockPro Precision 2026", layout="wide")
+st.set_page_config(page_title="StockPro Intelligence v2", layout="wide")
 tz = pytz.timezone('Asia/Jakarta')
 
-# --- SIDEBAR: KONTROL TOTAL ---
+# --- SIDEBAR ---
 st.sidebar.header("🛠️ Panel Kontrol")
-st.sidebar.subheader("📝 Kelola Watchlist")
 txt_input = st.sidebar.text_area("Input Kode:", "BBRI, TLKM, ASII, ADRO, GOTO, BMRI, BBNI, UNTR, AMRT, BRIS, BBCA, ANTM, MDKA, PTBA")
 manual_list = [f"{t.strip().upper()}.JK" for t in txt_input.split(",") if t.strip()][:30]
-
-st.sidebar.subheader("💰 Filter Harga")
-min_h = st.sidebar.number_input("Harga Minimum:", value=0)
-max_h = st.sidebar.number_input("Harga Maksimum:", value=500000)
 
 st.sidebar.subheader("↕️ Susunan Watchlist")
 sort_by = st.sidebar.selectbox("Susun Berdasarkan:", ("Perubahan (%)", "Harga", "Nama Emiten"))
@@ -40,7 +35,6 @@ def get_data_watchlist(tickers):
         except: continue
     return pd.DataFrame(combined)
 
-# --- HEADER ---
 st.title("🚀 StockPro Precision Intelligence")
 st.write(f"🕒 **Update:** {datetime.now(tz).strftime('%H:%M:%S')} WIB")
 
@@ -48,8 +42,7 @@ st.write(f"🕒 **Update:** {datetime.now(tz).strftime('%H:%M:%S')} WIB")
 df_w = get_data_watchlist(manual_list)
 df_s = pd.DataFrame()
 if not df_w.empty:
-    df_f = df_w[(df_w['Harga'] >= min_h) & (df_w['Harga'] <= max_h)]
-    df_s = df_f.sort_values(by=sort_col, ascending=ascending_logic).reset_index(drop=True)
+    df_s = df_w.sort_values(by=sort_col, ascending=ascending_logic).reset_index(drop=True)
     cols = st.columns(min(5, len(df_s)))
     for i in range(min(5, len(df_s))):
         with cols[i]:
@@ -67,7 +60,6 @@ with cb:
 tf_m, pd_m = {"1 Menit": "1m", "60 Menit": "60m", "1 Hari": "1d"}, {"1 Menit": "1d", "60 Menit": "1mo", "1 Hari": "1y"}
 
 try:
-    # Mengambil data yang cukup untuk mendukung lookback 40
     df = yf.download(f"{target}.JK", period="7d" if tf != "1 Hari" else "2y", interval=tf_m[tf], progress=False)
     
     if len(df) > 40:
@@ -83,49 +75,47 @@ try:
         e12 = pd.Series(cl).ewm(span=12).mean(); e26 = pd.Series(cl).ewm(span=26).mean()
         macd = e12 - e26; sig = macd.ewm(span=9).mean()
 
-        # --- ALGORITMA PREDIKSI PRESISI (10P) DENGAN LOOKBACK 40 ---
+        # --- ALGORITMA PREDIKSI STABIL (LOOKBACK 40) ---
         f_prices, f_dates = [], []
-        temp_cl, temp_vl = list(cl[-40:]), list(vl[-40:]) # Lookback 40
+        temp_cl = list(cl[-40:])
         last_dt = df.index[-1]
         step = df.index[-1] - df.index[-2] if len(df) > 1 else timedelta(minutes=1)
 
+        # Base Slope dari 40 periode terakhir
+        base_slope, _ = np.polyfit(np.arange(40), np.array(temp_cl), 1)
+
         for i in range(1, 11):
-            # 1. Slope Calculation (Regression) berbasis 40 periode
-            x = np.arange(40)
-            y = np.array(temp_cl[-40:])
-            slope, _ = np.polyfit(x, y, 1)
+            # 1. Momentum Decay: Tren semakin melandai seiring waktu (i)
+            decay_factor = 1 / (1 + (i * 0.1)) 
+            current_slope = base_slope * decay_factor
             
-            # 2. Advanced Weighting (Volume & Momentum) berbasis 40 periode
-            v_avg = np.mean(temp_vl[-40:])
-            v_ratio = temp_vl[-1] / v_avg if v_avg > 0 else 1
+            # 2. RSI & Mean Reversion Adjustment
             curr_rsi = rsi.iloc[-1]
+            # Jika overbought (>70), tarik harga ke bawah. Jika oversold (<30), dorong ke atas.
+            reversion = (50 - curr_rsi) * 0.001 * temp_cl[-1]
             
-            # Reversal adjustment (RSI)
-            rsi_adj = (40 - curr_rsi) * 0.003 if curr_rsi < 35 else (60 - curr_rsi) * 0.003 if curr_rsi > 65 else 0
-            # Volatility impulse
-            vol_impulse = (slope * 0.1 * v_ratio)
+            # 3. Volatility Clamp (Mencegah pergerakan > 2% per bar prediksi)
+            change = current_slope + reversion
+            max_change = temp_cl[-1] * 0.02
+            change = np.clip(change, -max_change, max_change)
             
-            # Next Price Calculation
-            next_p = temp_cl[-1] + slope + (temp_cl[-1] * rsi_adj) + vol_impulse
+            next_p = temp_cl[-1] + change
             f_prices.append(next_p)
             f_dates.append(last_dt + (step * i))
-            
-            # Update buffers untuk recursive simulation
             temp_cl.append(next_p)
-            temp_vl.append(v_avg)
 
-        # UI METRICS
+        # TAMPILAN
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Harga Real", f"Rp {cl[-1]:,.0f}")
-        m2.metric("Signal", "BUY" if macd.iloc[-1] > sig.iloc[-1] else "SELL")
-        m3.metric("RSI (40-Lookback)", f"{rsi.iloc[-1]:.1f}")
-        m4.metric("Prediksi T+10", f"Rp {f_prices[-1]:,.0f}")
+        m2.metric("MACD", "Bullish" if macd.iloc[-1] > sig.iloc[-1] else "Bearish")
+        m3.metric("RSI", f"{rsi.iloc[-1]:.1f}")
+        m4.metric("Target T+10", f"Rp {f_prices[-1]:,.0f}")
 
         # GRAFIK
         
         fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.4, 0.1, 0.2, 0.2])
         fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="Price"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="AI Prediction (40P Lookback)"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="AI Prediction"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=u_bb, line=dict(color='rgba(255,255,255,0.1)'), name="Upper BB"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=l_bb, line=dict(color='rgba(255,255,255,0.1)'), name="Lower BB", fill='tonexty'), row=1, col=1)
         
@@ -135,17 +125,15 @@ try:
         fig.add_trace(go.Scatter(x=df.index, y=sig, line=dict(color='orange'), name="Signal"), row=3, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=rsi, line=dict(color='magenta'), name="RSI"), row=4, col=1)
         
-        fig.update_layout(template="plotly_dark", height=900, xaxis_rangeslider_visible=False, xaxis4=dict(tickformat="%H:%M\n%d %b"))
-        st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
+        fig.update_layout(template="plotly_dark", height=900, xaxis_rangeslider_visible=False)
+        st.plotly_chart(fig, use_container_width=True)
 
         # TABEL
-        st.subheader("📋 Detail Proyeksi Harga (Lookback 40 Periode)")
+        st.subheader("📋 Estimasi Harga")
         st.table(pd.DataFrame({
             "Periode": [f"T+{i}" for i in range(1, 11)],
             "Waktu": [d.strftime('%H:%M (%d %b)') for d in f_dates],
-            "Estimasi Harga": [f"Rp {p:,.2f}" for p in f_prices]
+            "Harga": [f"Rp {p:,.2f}" for p in f_prices]
         }))
-    else:
-        st.warning("Data historis tidak mencukupi untuk jendela look-back 40 periode.")
 except Exception as e:
-    st.info("Pilih emiten yang valid untuk memulai analisis.")
+    st.info(f"Pilih emiten valid. Detail: {e}")
