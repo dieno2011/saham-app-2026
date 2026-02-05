@@ -67,10 +67,10 @@ with cb:
 tf_m, pd_m = {"1 Menit": "1m", "60 Menit": "60m", "1 Hari": "1d"}, {"1 Menit": "1d", "60 Menit": "1mo", "1 Hari": "1y"}
 
 try:
-    # Mengambil data lebih banyak untuk mendukung lookback 50
-    df = yf.download(f"{target}.JK", period="10d" if tf != "1 Hari" else "2y", interval=tf_m[tf], progress=False)
+    # Mengambil data yang cukup untuk mendukung lookback 40
+    df = yf.download(f"{target}.JK", period="7d" if tf != "1 Hari" else "2y", interval=tf_m[tf], progress=False)
     
-    if len(df) > 50:
+    if len(df) > 40:
         if tf != "1 Hari": df.index = df.index.tz_convert('Asia/Jakarta')
         cl, hi, lo, op, vl = [df[c].values.flatten() for c in ['Close', 'High', 'Low', 'Open', 'Volume']]
 
@@ -83,20 +83,20 @@ try:
         e12 = pd.Series(cl).ewm(span=12).mean(); e26 = pd.Series(cl).ewm(span=26).mean()
         macd = e12 - e26; sig = macd.ewm(span=9).mean()
 
-        # --- ALGORITMA PREDIKSI PRESISI (10P) DENGAN LOOKBACK 50 ---
+        # --- ALGORITMA PREDIKSI PRESISI (10P) DENGAN LOOKBACK 40 ---
         f_prices, f_dates = [], []
-        temp_cl, temp_vl = list(cl[-50:]), list(vl[-50:]) # Lookback 50
+        temp_cl, temp_vl = list(cl[-40:]), list(vl[-40:]) # Lookback 40
         last_dt = df.index[-1]
         step = df.index[-1] - df.index[-2] if len(df) > 1 else timedelta(minutes=1)
 
         for i in range(1, 11):
-            # 1. Slope Calculation (Regression) berbasis 50 periode
-            x = np.arange(50)
-            y = np.array(temp_cl[-50:])
+            # 1. Slope Calculation (Regression) berbasis 40 periode
+            x = np.arange(40)
+            y = np.array(temp_cl[-40:])
             slope, _ = np.polyfit(x, y, 1)
             
-            # 2. Advanced Weighting (Volume & Momentum) berbasis 50 periode
-            v_avg = np.mean(temp_vl[-50:])
+            # 2. Advanced Weighting (Volume & Momentum) berbasis 40 periode
+            v_avg = np.mean(temp_vl[-40:])
             v_ratio = temp_vl[-1] / v_avg if v_avg > 0 else 1
             curr_rsi = rsi.iloc[-1]
             
@@ -118,14 +118,14 @@ try:
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Harga Real", f"Rp {cl[-1]:,.0f}")
         m2.metric("Signal", "BUY" if macd.iloc[-1] > sig.iloc[-1] else "SELL")
-        m3.metric("RSI (50-Lookback)", f"{rsi.iloc[-1]:.1f}")
+        m3.metric("RSI (40-Lookback)", f"{rsi.iloc[-1]:.1f}")
         m4.metric("Prediksi T+10", f"Rp {f_prices[-1]:,.0f}")
 
         # GRAFIK
         
         fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.4, 0.1, 0.2, 0.2])
         fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="Price"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="AI Prediction (50P Lookback)"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="AI Prediction (40P Lookback)"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=u_bb, line=dict(color='rgba(255,255,255,0.1)'), name="Upper BB"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=l_bb, line=dict(color='rgba(255,255,255,0.1)'), name="Lower BB", fill='tonexty'), row=1, col=1)
         
@@ -139,13 +139,13 @@ try:
         st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
         # TABEL
-        st.subheader("📋 Detail Proyeksi Harga (Lookback 50 Periode)")
+        st.subheader("📋 Detail Proyeksi Harga (Lookback 40 Periode)")
         st.table(pd.DataFrame({
             "Periode": [f"T+{i}" for i in range(1, 11)],
             "Waktu": [d.strftime('%H:%M (%d %b)') for d in f_dates],
             "Estimasi Harga": [f"Rp {p:,.2f}" for p in f_prices]
         }))
     else:
-        st.warning("Data historis tidak mencukupi untuk jendela look-back 50 periode. Silakan pilih timeframe yang lebih panjang atau tunggu data terkumpul.")
+        st.warning("Data historis tidak mencukupi untuk jendela look-back 40 periode.")
 except Exception as e:
     st.info("Pilih emiten yang valid untuk memulai analisis.")
