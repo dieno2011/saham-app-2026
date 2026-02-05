@@ -13,7 +13,7 @@ tz = pytz.timezone('Asia/Jakarta')
 
 # --- SIDEBAR ---
 st.sidebar.header("🛠️ Panel Kontrol")
-txt_input = st.sidebar.text_area("Input Kode (Tanpa .JK):", "BBRI, TLKM, ASII, ADRO, GOTO, BMRI, BBNI")
+txt_input = st.sidebar.text_area("Input Kode (Tanpa .JK):", "BBRI, TLKM, ASII, ADRO, GOTO, BMRI, BBNI, UNTR, AMRT, BRIS, BBCA, ANTM, MDKA, PTBA")
 manual_list = [f"{t.strip().upper()}.JK" for t in txt_input.split(",") if t.strip()][:30]
 
 min_h = st.sidebar.number_input("Harga Minimum (Rp):", value=0)
@@ -36,21 +36,36 @@ def get_data_watchlist(tickers):
 st.title("🚀 StockPro Precision Intelligence")
 st.write(f"🕒 **Update:** {datetime.now(tz).strftime('%H:%M:%S')} WIB")
 
-# --- WATCHLIST ---
+# --- PROSES & TAMPILKAN WATCHLIST (DIKEMBALIKAN) ---
 df_w = get_data_watchlist(manual_list)
+df_s = pd.DataFrame() # Inisialisasi agar tidak error di bawah
+
 if not df_w.empty:
+    # Filter Harga
     df_s = df_w[(df_w['Harga'] >= min_h) & (df_w['Harga'] <= max_h)]
-    cols = st.columns(min(5, len(df_s)))
-    for i in range(min(5, len(df_s))):
-        with cols[i]:
-            st.metric(label=df_s.iloc[i]['Ticker'], value=f"Rp {df_s.iloc[i]['Harga']:,.0f}", delta=f"{df_s.iloc[i]['Chg%']}%")
+    
+    if not df_s.empty:
+        # Menampilkan List Watchlist dalam bentuk Metric Columns
+        cols = st.columns(min(5, len(df_s)))
+        for i in range(len(df_s)):
+            col_idx = i % 5
+            with cols[col_idx]:
+                st.metric(
+                    label=df_s.iloc[i]['Ticker'], 
+                    value=f"Rp {df_s.iloc[i]['Harga']:,.0f}", 
+                    delta=f"{df_s.iloc[i]['Chg%']}%"
+                )
+    else:
+        st.warning("Tidak ada saham yang memenuhi kriteria filter harga.")
 
 st.divider()
 
-# --- ANALISIS ---
+# --- ANALISIS GRAFIK ---
 ca, cb = st.columns([1, 1])
 with ca:
-    target = st.text_input("🔍 Kode Analisis:", value="BBRI").upper()
+    # Mengambil ticker pertama dari watchlist sebagai default jika tersedia
+    default_ticker = df_s.iloc[0]['Ticker'] if not df_s.empty else "BBRI"
+    target = st.text_input("🔍 Kode Analisis:", value=default_ticker).upper()
 with cb:
     tf = st.selectbox("⏱️ Timeframe:", ("1 Menit", "60 Menit", "1 Hari"))
 
@@ -76,23 +91,16 @@ try:
         last_dt = df.index[-1]
         step = df.index[-1] - df.index[-2] if len(df) > 1 else timedelta(minutes=1)
 
-        # Bobot eksponensial untuk 40 periode (data terbaru lebih penting)
         weights = np.exp(np.linspace(-1., 0., 40))
         weights /= weights.sum()
 
         for i in range(1, 11):
-            # 1. Weighted Trend Analysis
             current_window = np.array(t_cl[-40:])
             weighted_mean = np.sum(current_window * weights)
             slope = (current_window[-1] - weighted_mean) / 40
-            
-            # 2. Volatility Decay (Mengurangi liar harga)
             volat = np.std(current_window) * 0.1
             decay = 1 / (1 + (i * 0.2))
-            
-            # 3. Final Prediction Move
-            move = (slope * decay) + (np.random.normal(0, volat) * 0.05) # Menambahkan noise mikro pasar
-            
+            move = (slope * decay) + (np.random.normal(0, volat) * 0.05)
             next_p = t_cl[-1] + move
             f_prices.append(next_p)
             f_dates.append(last_dt + (step * i))
@@ -101,7 +109,7 @@ try:
         # --- GRAFIK ---
         
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, 
-                           row_heights=[0.8, 0.2], subplot_titles=("Main Chart (Price & Indicators)", "Volume"))
+                           row_heights=[0.8, 0.2], subplot_titles=("Main Chart (Price & Indicators Overlay)", "Volume"))
         
         fig.add_trace(go.Candlestick(x=df.index, open=op, high=hi, low=lo, close=cl, name="Price"), row=1, col=1)
         fig.add_trace(go.Scatter(x=f_dates, y=f_prices, line=dict(color='yellow', width=3, dash='dot'), name="Precision Predict"), row=1, col=1)
